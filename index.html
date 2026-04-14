@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMR Scanner - Portal</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; text-align: center; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 400px; margin: 0 auto; }
+        .warning-box { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 15px; border-radius: 5px; text-align: left; font-size: 14px; margin-bottom: 20px;}
+        
+        /* Updated Button Styles */
+        button { padding: 15px 30px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; transition: background 0.3s;}
+        button:disabled { background-color: #6c757d; cursor: not-allowed; }
+        
+        #scannerSection { display: none; margin-top: 20px; }
+        video { width: 100%; border: 3px solid #333; border-radius: 8px; background: #000; }
+        canvas { display: none; /* We hide the canvas, it's just for processing */ }
+    </style>
+    
+    <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+</head>
+<body>
+
+    <div id="disclaimerSection" class="card">
+        <h2>System Requirements</h2>
+        
+        <div class="warning-box">
+            <strong>⚠️ For Smooth Scanning:</strong>
+            <ul>
+                <li>Use <b>Google Chrome</b> (Android) or <b>Safari</b> (iOS).</li>
+                <li>Device must have at least <b>4GB RAM</b>.</li>
+                <li>Ensure good lighting without shadows on the paper.</li>
+            </ul>
+        </div>
+
+        <p id="browserWarning" style="color: red; font-weight: bold; display: none;">
+            Please open this link in Google Chrome!
+        </p>
+
+        <button id="agreeBtn" disabled>Loading AI Engine...</button>
+    </div>
+
+    <div id="scannerSection" class="card">
+        <h2>Align Sheet & Scan</h2>
+        <video id="cameraFeed" autoplay playsinline></video>
+        <button id="snapBtn" style="background-color: #007bff; margin-top: 10px;">Grade Sheet</button>
+        
+        <canvas id="canvasOutput"></canvas>
+    </div>
+
+    <script>
+        const agreeBtn = document.getElementById('agreeBtn');
+        const disclaimerSection = document.getElementById('disclaimerSection');
+        const scannerSection = document.getElementById('scannerSection');
+        const videoElement = document.getElementById('cameraFeed');
+        const browserWarning = document.getElementById('browserWarning');
+
+        // --- OPENCV INITIALIZATION ---
+        // This function is called automatically when opencv.js finishes loading
+        function onOpenCvReady() {
+            console.log("OpenCV is ready!");
+            agreeBtn.disabled = false;
+            agreeBtn.innerText = "I Understand, Open Camera";
+            agreeBtn.style.backgroundColor = "#28a745"; // Make it green
+        }
+
+        // --- BROWSER CHECK ---
+        const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor);
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+        if (!isChrome && !isIOS) {
+            browserWarning.style.display = "block";
+        }
+
+        // --- CAMERA LOGIC ---
+        agreeBtn.addEventListener('click', () => {
+            disclaimerSection.style.display = 'none';
+            scannerSection.style.display = 'block';
+
+            navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
+            })
+            .then(stream => {
+                videoElement.srcObject = stream;
+            })
+            .catch(error => {
+                console.error("Camera error:", error);
+                alert("Camera access is required.");
+            });
+        });
+    </script>
+
+</body>
+</html>
