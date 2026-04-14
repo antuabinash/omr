@@ -14,10 +14,13 @@
         .video-container { position: relative; width: 100%; max-width: 450px; margin: 0 auto; border: 3px solid #333; border-radius: 8px; overflow: hidden; background: #000; }
         video { width: 100%; display: block; }
         
-        /* EvalBee Target Squares */
-        .target-square { position: absolute; width: 60px; height: 60px; border: 3px solid #4285f4; background-color: rgba(66, 133, 244, 0.15); z-index: 10; pointer-events: none; border-radius: 4px; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
-        .tl { top: 15%; left: 8%; } .tr { top: 15%; right: 8%; }
-        .bl { bottom: 15%; left: 8%; } .br { bottom: 15%; right: 8%; }
+        /* NEW: A unified Document Frame instead of 4 floating squares */
+        .guide-frame { position: absolute; top: 10%; bottom: 10%; left: 8%; right: 8%; border: 2px dashed rgba(255, 255, 255, 0.4); z-index: 10; pointer-events: none; }
+        .corner-mark { position: absolute; width: 40px; height: 40px; border: 4px solid #4285f4; box-shadow: 0 0 8px rgba(0,0,0,0.5); }
+        .tl { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+        .tr { top: -2px; right: -2px; border-left: none; border-bottom: none; }
+        .bl { bottom: -2px; left: -2px; border-right: none; border-top: none; }
+        .br { bottom: -2px; right: -2px; border-left: none; border-top: none; }
 
         .status-text { background: #007bff; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; transition: background 0.3s;}
 
@@ -34,12 +37,17 @@
     </div>
 
     <div id="scannerSection" class="card">
-        <div id="scanStatus" class="status-text">Place the 4 black squares inside the blue boxes...</div>
+        <div id="scanStatus" class="status-text">Fit the OMR sheet inside the frame...</div>
         
         <div class="video-container" id="vidContainer">
             <video id="cameraFeed" autoplay playsinline></video>
-            <div class="target-square tl"></div><div class="target-square tr"></div>
-            <div class="target-square bl"></div><div class="target-square br"></div>
+            <!-- NEW: Unified Guide Frame -->
+            <div class="guide-frame">
+                <div class="corner-mark tl"></div>
+                <div class="corner-mark tr"></div>
+                <div class="corner-mark bl"></div>
+                <div class="corner-mark br"></div>
+            </div>
         </div>
         
         <canvas id="canvasOutput"></canvas>
@@ -126,146 +134,162 @@
                     }
                 }
 
-                // 1. THE "DON'T HURRY" LOCK
-                if (centers.length === 4) {
+                // 1. THE "DON'T HURRY" LOCK (Upgraded for flexibility)
+                // Instead of requiring EXACTLY 4 squares, we accept 4 or more, and extract the outermost ones!
+                if (centers.length >= 4) {
+                    
+                    // Sort to find the extreme outer corners
                     centers.sort((a, b) => (a.x + a.y) - (b.x + b.y));
-                    let tl = centers[0]; let br = centers[3];
+                    let tl = centers[0]; let br = centers[centers.length - 1];
                     centers.sort((a, b) => (a.x - a.y) - (b.x - b.y));
-                    let bl = centers[0]; let tr = centers[3];
+                    let bl = centers[0]; let tr = centers[centers.length - 1];
                     let sortedCenters = [tl, tr, bl, br];
 
-                    if (areCentersStable(sortedCenters, lastCenters)) {
-                        stableFrames++;
-                        scanStatus.style.backgroundColor = "#ffc107";
-                        scanStatus.innerText = `Holding steady... ${stableFrames}/4`;
-                    } else {
-                        stableFrames = 1;
-                        scanStatus.style.backgroundColor = "#17a2b8";
-                        scanStatus.innerText = "Aligning...";
-                    }
-                    lastCenters = sortedCenters;
-
-                    // Execute Capture if stable for 4 frames!
-                    if (stableFrames >= 4) {
-                        clearInterval(autoScanInterval); 
-                        scanStatus.style.backgroundColor = "#28a745";
-                        scanStatus.innerText = "Processing EvalBee Grid...";
-
-                        let maxWidth = Math.max(Math.hypot(br.x - bl.x, br.y - bl.y), Math.hypot(tr.x - tl.x, tr.y - tl.y));
-                        let maxHeight = Math.max(Math.hypot(tr.x - br.x, tr.y - br.y), Math.hypot(tl.x - bl.x, tl.y - bl.y));
-
-                        let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
-                        let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, maxWidth, 0, maxWidth, maxHeight, 0, maxHeight]);
+                    // Check if these 4 corners make a reasonably large rectangle (prevents locking onto small background noise)
+                    let estimatedWidth = Math.hypot(tr.x - tl.x, tr.y - tl.y);
+                    
+                    if (estimatedWidth > canvasElement.width * 0.4) {
                         
-                        let M = cv.getPerspectiveTransform(srcTri, dstTri);
-                        let warped = new cv.Mat();
-                        cv.warpPerspective(src, warped, M, new cv.Size(maxWidth, maxHeight), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
-
-                        let warpedGray = new cv.Mat();
-                        cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
-                        let warpedThresh = new cv.Mat();
-                        cv.threshold(warpedGray, warpedThresh, 150, 255, cv.THRESH_BINARY_INV);
-                        
-                        // --- 2. FIND ROW SYNC MARKS (EVALBEE LOGIC) ---
-                        let rowContours = new cv.MatVector();
-                        cv.findContours(warpedThresh, rowContours, new cv.Mat(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-
-                        let rowMarks = [];
-                        for (let j = 0; j < rowContours.size(); ++j) {
-                            let bRect = cv.boundingRect(rowContours.get(j));
-                            let cX = bRect.x + (bRect.width / 2);
-                            let cY = bRect.y + (bRect.height / 2);
-
-                            // Sync marks are on far left (<8%), and are wide rectangles (width > height * 1.5)
-                            if (cX < maxWidth * 0.08 && bRect.width > bRect.height * 1.5 && bRect.width > maxWidth * 0.01) {
-                                // Exclude corner anchors from this array
-                                if (cY > maxHeight * 0.05 && cY < maxHeight * 0.95) {
-                                    rowMarks.push({ y: cY });
-                                }
-                            }
-                        }
-
-                        rowMarks.sort((a, b) => a.y - b.y);
-
-                        // Remove duplicates (sometimes OpenCV counts the same mark twice)
-                        let uniqueMarks = [];
-                        for(let i=0; i<rowMarks.length; i++) {
-                            if (uniqueMarks.length === 0 || rowMarks[i].y - uniqueMarks[uniqueMarks.length-1].y > maxHeight * 0.02) {
-                                uniqueMarks.push(rowMarks[i]);
-                            }
-                        }
-
-                        // --- 3. PROJECT THE VIRTUAL GRID ---
-                        if (uniqueMarks.length === 13) {
-                            let filledBubbles = 0;
-                            // These match the exact CSS percentages from our omr_sheet_evalbee.html!
-                            let col1X = [0.20, 0.28, 0.36, 0.44];
-                            let col2X = [0.66, 0.74, 0.82, 0.90];
-                            let radius = maxWidth * 0.015;
-
-                            // Reusable function to grade a specific bubble
-                            let checkBubble = function(x, y, r) {
-                                let box = new cv.Rect(x - r, y - r, r * 2, r * 2);
-                                if(box.x < 0 || box.y < 0 || box.x + box.width > maxWidth || box.y + box.height > maxHeight) return;
-                                
-                                let roi = warpedThresh.roi(box);
-                                let fillRatio = cv.countNonZero(roi) / (box.width * box.height);
-                                let center = new cv.Point(x, y);
-
-                                if (fillRatio > 0.40) {
-                                    filledBubbles++;
-                                    cv.circle(warped, center, Math.round(r), [0, 255, 0, 255], 4); 
-                                } else {
-                                    cv.circle(warped, center, Math.round(r), [255, 0, 0, 255], 2);
-                                }
-                                roi.delete();
-                            };
-
-                            for(let i=0; i<13; i++) {
-                                let rowY = uniqueMarks[i].y;
-                                // Grade Col 1
-                                col1X.forEach((xPct) => { checkBubble(maxWidth * xPct, rowY, radius); });
-                                // Grade Col 2 (Only 12 questions)
-                                if (i < 12) {
-                                    col2X.forEach((xPct) => { checkBubble(maxWidth * xPct, rowY, radius); });
-                                }
-                            }
-                            
-                            // Display final UI
-                            canvasElement.width = maxWidth;
-                            canvasElement.height = maxHeight;
-                            canvasElement.style.display = "block"; 
-                            cv.imshow('canvasOutput', warped);
-                            
-                            vidContainer.style.display = "none";
-                            scanStatus.innerText = "Scan Complete!";
-                            scoreDisplay.style.display = "block";
-                            scoreDisplay.innerText = `Mark: ${filledBubbles} / 25`; 
-
+                        if (areCentersStable(sortedCenters, lastCenters)) {
+                            stableFrames++;
+                            scanStatus.style.backgroundColor = "#ffc107";
+                            scanStatus.innerText = `Holding steady... ${stableFrames}/4`;
                         } else {
-                            // FAILED TO FIND ALL 13 MARKS - Restart Scanner
-                            scanStatus.style.backgroundColor = "#dc3545";
-                            scanStatus.innerText = `Error: Found ${uniqueMarks.length}/13 row marks. Retrying...`;
-                            setTimeout(() => {
+                            stableFrames = 1;
+                            scanStatus.style.backgroundColor = "#17a2b8";
+                            scanStatus.innerText = "Aligning...";
+                        }
+                        lastCenters = sortedCenters;
+
+                        // Execute Capture if stable for 4 frames!
+                        if (stableFrames >= 4) {
+                            clearInterval(autoScanInterval); 
+                            scanStatus.style.backgroundColor = "#28a745";
+                            scanStatus.innerText = "Processing EvalBee Grid...";
+
+                            let maxWidth = Math.max(Math.hypot(br.x - bl.x, br.y - bl.y), Math.hypot(tr.x - tl.x, tr.y - tl.y));
+                            let maxHeight = Math.max(Math.hypot(tr.x - br.x, tr.y - br.y), Math.hypot(tl.x - bl.x, tl.y - bl.y));
+
+                            let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
+                            let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, maxWidth, 0, maxWidth, maxHeight, 0, maxHeight]);
+                            
+                            let M = cv.getPerspectiveTransform(srcTri, dstTri);
+                            let warped = new cv.Mat();
+                            cv.warpPerspective(src, warped, M, new cv.Size(maxWidth, maxHeight), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+
+                            let warpedGray = new cv.Mat();
+                            cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
+                            let warpedThresh = new cv.Mat();
+                            cv.threshold(warpedGray, warpedThresh, 150, 255, cv.THRESH_BINARY_INV);
+                            
+                            // --- 2. FIND ROW SYNC MARKS (EVALBEE LOGIC) ---
+                            let rowContours = new cv.MatVector();
+                            cv.findContours(warpedThresh, rowContours, new cv.Mat(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+                            let rowMarks = [];
+                            for (let j = 0; j < rowContours.size(); ++j) {
+                                let bRect = cv.boundingRect(rowContours.get(j));
+                                let cX = bRect.x + (bRect.width / 2);
+                                let cY = bRect.y + (bRect.height / 2);
+
+                                // Sync marks are on far left (<8%), and are wide rectangles (width > height * 1.5)
+                                if (cX < maxWidth * 0.08 && bRect.width > bRect.height * 1.5 && bRect.width > maxWidth * 0.01) {
+                                    // Exclude corner anchors from this array
+                                    if (cY > maxHeight * 0.05 && cY < maxHeight * 0.95) {
+                                        rowMarks.push({ y: cY });
+                                    }
+                                }
+                            }
+
+                            rowMarks.sort((a, b) => a.y - b.y);
+
+                            // Remove duplicates (sometimes OpenCV counts the same mark twice)
+                            let uniqueMarks = [];
+                            for(let i=0; i<rowMarks.length; i++) {
+                                if (uniqueMarks.length === 0 || rowMarks[i].y - uniqueMarks[uniqueMarks.length-1].y > maxHeight * 0.02) {
+                                    uniqueMarks.push(rowMarks[i]);
+                                }
+                            }
+
+                            // --- 3. PROJECT THE VIRTUAL GRID ---
+                            if (uniqueMarks.length === 13) {
+                                let filledBubbles = 0;
+                                // These match the exact CSS percentages from our omr_sheet_evalbee.html!
+                                let col1X = [0.20, 0.28, 0.36, 0.44];
+                                let col2X = [0.66, 0.74, 0.82, 0.90];
+                                let radius = maxWidth * 0.015;
+
+                                // Reusable function to grade a specific bubble
+                                let checkBubble = function(x, y, r) {
+                                    let box = new cv.Rect(x - r, y - r, r * 2, r * 2);
+                                    if(box.x < 0 || box.y < 0 || box.x + box.width > maxWidth || box.y + box.height > maxHeight) return;
+                                    
+                                    let roi = warpedThresh.roi(box);
+                                    let fillRatio = cv.countNonZero(roi) / (box.width * box.height);
+                                    let center = new cv.Point(x, y);
+
+                                    if (fillRatio > 0.40) {
+                                        filledBubbles++;
+                                        cv.circle(warped, center, Math.round(r), [0, 255, 0, 255], 4); 
+                                    } else {
+                                        cv.circle(warped, center, Math.round(r), [255, 0, 0, 255], 2);
+                                    }
+                                    roi.delete();
+                                };
+
+                                for(let i=0; i<13; i++) {
+                                    let rowY = uniqueMarks[i].y;
+                                    // Grade Col 1
+                                    col1X.forEach((xPct) => { checkBubble(maxWidth * xPct, rowY, radius); });
+                                    // Grade Col 2 (Only 12 questions)
+                                    if (i < 12) {
+                                        col2X.forEach((xPct) => { checkBubble(maxWidth * xPct, rowY, radius); });
+                                    }
+                                }
+                                
+                                // Display final UI
+                                canvasElement.width = maxWidth;
+                                canvasElement.height = maxHeight;
+                                canvasElement.style.display = "block"; 
+                                cv.imshow('canvasOutput', warped);
+                                
+                                vidContainer.style.display = "none";
+                                scanStatus.innerText = "Scan Complete!";
+                                scoreDisplay.style.display = "block";
+                                scoreDisplay.innerText = `Mark: ${filledBubbles} / 25`; 
+
+                            } else {
+                                // If we didn't find all 13 marks, fail silently and resume scanning loop
+                                // This removes the red "Error" flash and makes the UX much smoother
                                 stableFrames = 0;
                                 lastCenters = [];
+                                scanStatus.style.backgroundColor = "#17a2b8";
+                                scanStatus.innerText = "Re-aligning sheet...";
                                 autoScanInterval = setInterval(attemptAutoCapture, 500);
-                            }, 2000);
-                        }
+                            }
 
-                        // Memory cleanup
-                        srcTri.delete(); dstTri.delete(); M.delete(); warped.delete();
-                        warpedGray.delete(); warpedThresh.delete(); rowContours.delete();
+                            // Memory cleanup
+                            srcTri.delete(); dstTri.delete(); M.delete(); warped.delete();
+                            warpedGray.delete(); warpedThresh.delete(); rowContours.delete();
+                        }
+                    } else {
+                        // Estimated width is too small
+                        stableFrames = 0;
+                        lastCenters = [];
+                        scanStatus.style.backgroundColor = "#007bff";
+                        scanStatus.innerText = "Bring the sheet closer...";
                     }
                 } else {
                     stableFrames = 0;
                     lastCenters = [];
                     scanStatus.style.backgroundColor = "#007bff";
-                    scanStatus.innerText = "Place the 4 black squares inside the blue boxes...";
+                    scanStatus.innerText = "Fit the OMR sheet inside the frame...";
                 }
 
                 src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
-            } catch (err) {}
+            } catch (err) {
+                console.error("OpenCV Processing Error:", err);
+            }
         }
     </script>
 </body>
