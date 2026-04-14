@@ -125,57 +125,93 @@
                 cv.GaussianBlur(gray, gray, ksize, 0, 0, cv.BORDER_DEFAULT);
 
                 // Thresholding: Force pure black and white.
-                // We use BINARY_INV so dark areas become white shapes on a black background
                 cv.threshold(gray, thresh, 120, 255, cv.THRESH_BINARY_INV);
 
-                // Find Contours (Outlines of shapes)
+                // Find Contours
                 let contours = new cv.MatVector();
                 let hierarchy = new cv.Mat();
                 cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-                // Create a copy of the original image to draw green boxes on
-                let displayMat = src.clone();
                 let squaresFound = 0;
+                let centers = []; // Array to store the center point of every square we find
 
                 // Loop through the outlines to find our anchor squares
                 for (let i = 0; i < contours.size(); ++i) {
                     let cnt = contours.get(i);
                     let area = cv.contourArea(cnt);
 
-                    // Filter A: Size (Ignore tiny specs and massive borders)
                     if (area > 300 && area < 10000) { 
-                        
-                        // Filter B: Does it have exactly 4 corners?
                         let perimeter = cv.arcLength(cnt, true);
                         let approx = new cv.Mat();
-                        // Approximate the shape with straight lines
                         cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
 
-                        // If it has 4 sides, it's a square/rectangle!
                         if (approx.rows === 4) {
                             squaresFound++;
-                            
-                            // Get the coordinates to draw a box
                             let rect = cv.boundingRect(cnt);
-                            let point1 = new cv.Point(rect.x, rect.y);
-                            let point2 = new cv.Point(rect.x + rect.width, rect.y + rect.height);
                             
-                            // Draw a thick green rectangle around the anchor square
-                            cv.rectangle(displayMat, point1, point2, [0, 255, 0, 255], 4);
+                            // Calculate the exact center of this square
+                            let cx = rect.x + (rect.width / 2);
+                            let cy = rect.y + (rect.height / 2);
+                            centers.push({ x: cx, y: cy });
                         }
-                        approx.delete(); // Free memory
+                        approx.delete();
                     }
                 }
 
-                // Show the image with drawn boxes on our canvas
-                canvasElement.style.display = "block"; 
-                cv.imshow('canvasOutput', displayMat);
+                // If we found at least 4 squares, we can flatten the image!
+                if (centers.length >= 4) {
+                    // Sort the points to find the 4 outermost corners using math
+                    // Top-Left has the smallest (x + y)
+                    // Bottom-Right has the largest (x + y)
+                    // Top-Right has the largest (x - y)
+                    // Bottom-Left has the smallest (x - y)
+                    
+                    centers.sort((a, b) => (a.x + a.y) - (b.x + b.y));
+                    let tl = centers[0]; 
+                    let br = centers[centers.length - 1];
 
-                console.log(`OpenCV found ${squaresFound} squares!`);
+                    centers.sort((a, b) => (a.x - a.y) - (b.x - b.y));
+                    let bl = centers[0];
+                    let tr = centers[centers.length - 1];
 
-                // CLEAN UP ALL MEMORY (Crucial in JS to prevent app from crashing)
+                    // Calculate the size of our new flattened image
+                    let widthA = Math.hypot(br.x - bl.x, br.y - bl.y);
+                    let widthB = Math.hypot(tr.x - tl.x, tr.y - tl.y);
+                    let maxWidth = Math.max(widthA, widthB);
+
+                    let heightA = Math.hypot(tr.x - br.x, tr.y - br.y);
+                    let heightB = Math.hypot(tl.x - bl.x, tl.y - bl.y);
+                    let maxHeight = Math.max(heightA, heightB);
+
+                    // Create the math matrices for the transformation
+                    let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
+                    let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, maxWidth, 0, maxWidth, maxHeight, 0, maxHeight]);
+                    let dsize = new cv.Size(maxWidth, maxHeight);
+
+                    // WARP PERSPECTIVE (Stretch and Flatten)
+                    let M = cv.getPerspectiveTransform(srcTri, dstTri);
+                    let warped = new cv.Mat();
+                    cv.warpPerspective(src, warped, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+
+                    // Resize the canvas to match our new flattened image
+                    canvasElement.width = maxWidth;
+                    canvasElement.height = maxHeight;
+                    
+                    // Show the perfect, flattened image!
+                    canvasElement.style.display = "block"; 
+                    cv.imshow('canvasOutput', warped);
+
+                    // Clean up memory for the warp variables
+                    srcTri.delete(); dstTri.delete(); M.delete(); warped.delete();
+                    console.log("Successfully deskewed and flattened the sheet!");
+
+                } else {
+                    alert(`Only found ${squaresFound} markers. Please make sure all 4 corners of the OMR sheet are clearly in the frame!`);
+                }
+
+                // CLEAN UP ALL MEMORY
                 src.delete(); gray.delete(); thresh.delete(); 
-                contours.delete(); hierarchy.delete(); displayMat.delete();
+                contours.delete(); hierarchy.delete();
 
             } catch (err) {
                 console.error("OpenCV Error:", err);
