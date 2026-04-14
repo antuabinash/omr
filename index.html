@@ -3,17 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OMR Scanner - Dual Axis</title>
+    <title>OMR Scanner - Pro Edition</title>
     <style>
         body { font-family: sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; text-align: center; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
-        button { padding: 15px 30px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; }
+        
+        button { padding: 15px 30px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s; }
         button:disabled { background-color: #6c757d; cursor: not-allowed; }
         
         #scannerSection { display: none; margin-top: 20px; }
+        
+        /* Camera Container */
         .video-container { position: relative; width: 100%; max-width: 450px; margin: 0 auto; border: 3px solid #333; border-radius: 8px; overflow: hidden; background: #000; }
         video { width: 100%; display: block; }
         
+        /* Visual Guide locked to A4 Aspect Ratio */
         .guide-frame { 
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
             width: 75%; aspect-ratio: 1 / 1.4142; border: 2px dashed rgba(255, 255, 255, 0.6); 
@@ -29,12 +33,14 @@
 
         canvas { display: none; width: 100%; border: 3px solid #28a745; border-radius: 8px; margin-top: 15px; }
         
+        /* Results UI */
         .result-card { display: none; background: #28a745; color: white; padding: 15px; border-radius: 8px; margin-top: 15px; text-align: left; }
         .result-card h3 { margin: 0 0 10px 0; border-bottom: 1px solid rgba(255,255,255,0.3); padding-bottom: 5px; }
         .result-card p { margin: 5px 0; font-size: 18px; font-weight: bold; }
         
         #resetBtn { display: none; background-color: #007bff; margin-top: 15px; }
     </style>
+    <!-- Load OpenCV -->
     <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
 </head>
 <body>
@@ -49,6 +55,7 @@
         
         <div class="video-container" id="vidContainer">
             <video id="cameraFeed" autoplay playsinline></video>
+            <!-- A4 Document Frame -->
             <div class="guide-frame">
                 <div class="corner-mark tl"></div><div class="corner-mark tr"></div>
                 <div class="corner-mark bl"></div><div class="corner-mark br"></div>
@@ -57,6 +64,7 @@
         
         <canvas id="canvasOutput"></canvas>
         
+        <!-- Results Card -->
         <div class="result-card" id="resultCard">
             <h3>Scan Complete</h3>
             <p id="classOut">Class: --</p>
@@ -85,7 +93,7 @@
         
         let autoScanInterval;
         let stableFrames = 0;
-        let lastCenters = [];
+        let lastCorners = [];
 
         function onOpenCvReady() {
             agreeBtn.disabled = false;
@@ -104,11 +112,12 @@
             .catch(error => { alert("Camera access required."); });
         });
 
-        function areCentersStable(newCenters, oldCenters) {
-            if (oldCenters.length !== 4) return false;
+        // Helper to check if the camera is holding steady
+        function areCornersStable(newCorners, oldCorners) {
+            if (oldCorners.length !== 4) return false;
             let diff = 0;
             for(let i=0; i<4; i++) {
-                diff += Math.abs(newCenters[i].x - oldCenters[i].x) + Math.abs(newCenters[i].y - oldCenters[i].y);
+                diff += Math.abs(newCorners[i].x - oldCorners[i].x) + Math.abs(newCorners[i].y - oldCorners[i].y);
             }
             return diff < 40; 
         }
@@ -125,6 +134,7 @@
                 let gray = new cv.Mat();
                 let thresh = new cv.Mat();
                 
+                // Preprocess image
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
                 cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
                 cv.threshold(gray, thresh, 120, 255, cv.THRESH_BINARY_INV);
@@ -133,7 +143,8 @@
                 let hierarchy = new cv.Mat();
                 cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-                let centers = []; 
+                // Collect bounding rects of all potential corner markers
+                let cornerRects = []; 
 
                 for (let i = 0; i < contours.size(); ++i) {
                     let cnt = contours.get(i);
@@ -146,32 +157,49 @@
                         let approx = new cv.Mat();
                         cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
 
-                        if (approx.rows === 4) centers.push({ x: bRect.x + (bRect.width / 2), y: bRect.y + (bRect.height / 2) });
+                        if (approx.rows === 4) {
+                            cornerRects.push(bRect);
+                        }
                         approx.delete();
                     }
                 }
 
-                if (centers.length >= 4) {
-                    centers.sort((a, b) => (a.x + a.y) - (b.x + b.y));
-                    let tl = centers[0]; let br = centers[centers.length - 1];
-                    centers.sort((a, b) => (a.x - a.y) - (b.x - b.y));
-                    let bl = centers[0]; let tr = centers[centers.length - 1];
-                    let sortedCenters = [tl, tr, bl, br];
+                // If we found 4 or more squares, try to extract the boundaries
+                if (cornerRects.length >= 4) {
+                    
+                    // Sort them to find the 4 outermost rectangles
+                    cornerRects.sort((a, b) => (a.x + a.y) - (b.x + b.y));
+                    let tlRect = cornerRects[0]; 
+                    let brRect = cornerRects[cornerRects.length - 1];
+                    
+                    cornerRects.sort((a, b) => (a.x - a.y) - (b.x - b.y));
+                    let blRect = cornerRects[0]; 
+                    let trRect = cornerRects[cornerRects.length - 1];
 
+                    // CRITICAL FIX: Use the OUTER EDGES of the rects, not the centers.
+                    // This guarantees we don't accidentally cut off the top/side sync marks!
+                    let tl = { x: tlRect.x, y: tlRect.y };
+                    let tr = { x: trRect.x + trRect.width, y: trRect.y };
+                    let bl = { x: blRect.x, y: blRect.y + blRect.height };
+                    let br = { x: brRect.x + brRect.width, y: brRect.y + brRect.height };
+                    
+                    let sortedCorners = [tl, tr, bl, br];
                     let estimatedWidth = Math.hypot(tr.x - tl.x, tr.y - tl.y);
                     
+                    // Only lock on if the sheet fills a decent portion of the camera
                     if (estimatedWidth > canvasElement.width * 0.4) {
-                        if (areCentersStable(sortedCenters, lastCenters)) {
+                        if (areCornersStable(sortedCorners, lastCorners)) {
                             stableFrames++;
                             scanStatus.style.backgroundColor = "#ffc107";
                             scanStatus.innerText = `Holding steady... ${stableFrames}/4`;
                         } else {
                             stableFrames = 1;
                             scanStatus.style.backgroundColor = "#17a2b8";
-                            scanStatus.innerText = "Aligning...";
+                            scanStatus.innerText = "Aligning corners...";
                         }
-                        lastCenters = sortedCenters;
+                        lastCorners = sortedCorners;
 
+                        // Lock on successful!
                         if (stableFrames >= 4) {
                             clearInterval(autoScanInterval); 
                             scanStatus.style.backgroundColor = "#28a745";
@@ -180,19 +208,20 @@
                             let maxWidth = Math.max(Math.hypot(br.x - bl.x, br.y - bl.y), Math.hypot(tr.x - tl.x, tr.y - tl.y));
                             let maxHeight = Math.max(Math.hypot(tr.x - br.x, tr.y - br.y), Math.hypot(tl.x - bl.x, tl.y - bl.y));
 
+                            // Flatten the image using the perfect outer boundaries
                             let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
                             let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, maxWidth, 0, maxWidth, maxHeight, 0, maxHeight]);
-                            
                             let M = cv.getPerspectiveTransform(srcTri, dstTri);
                             let warped = new cv.Mat();
                             cv.warpPerspective(src, warped, M, new cv.Size(maxWidth, maxHeight), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
 
+                            // Threshold the flattened image
                             let warpedGray = new cv.Mat();
                             cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
                             let warpedThresh = new cv.Mat();
                             cv.threshold(warpedGray, warpedThresh, 150, 255, cv.THRESH_BINARY_INV);
                             
-                            // --- 2. FIND ROW & COLUMN SYNC MARKS ---
+                            // --- FIND ROW & COLUMN SYNC MARKS ---
                             let lineContours = new cv.MatVector();
                             cv.findContours(warpedThresh, lineContours, new cv.Mat(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
@@ -204,17 +233,18 @@
                                 let cX = bRect.x + (bRect.width / 2);
                                 let cY = bRect.y + (bRect.height / 2);
 
-                                // Find Left Row Marks
-                                if (cX < maxWidth * 0.08 && bRect.width > bRect.height * 1.5 && bRect.width > maxWidth * 0.01) {
+                                // Find Left Row Marks (Must be wide & on the far left edge)
+                                if (cX < maxWidth * 0.10 && bRect.width > bRect.height * 1.2 && bRect.width > maxWidth * 0.01) {
                                     if (cY > maxHeight * 0.05 && cY < maxHeight * 0.95) rowMarks.push({ y: cY });
                                 }
                                 
-                                // NEW: Find Top Column Marks
-                                if (cY < maxHeight * 0.08 && bRect.height > bRect.width * 1.5 && bRect.height > maxHeight * 0.01) {
+                                // Find Top Column Marks (Must be tall & on the top edge)
+                                if (cY < maxHeight * 0.10 && bRect.height > bRect.width * 1.2 && bRect.height > maxHeight * 0.01) {
                                     if (cX > maxWidth * 0.05 && cX < maxWidth * 0.95) colMarks.push({ x: cX });
                                 }
                             }
 
+                            // Sort and remove duplicates based on vertical/horizontal proximity
                             rowMarks.sort((a, b) => a.y - b.y);
                             let uniqueRows = [];
                             for(let i=0; i<rowMarks.length; i++) {
@@ -227,10 +257,10 @@
                                 if (uniqueCols.length === 0 || colMarks[i].x - uniqueCols[uniqueCols.length-1].x > maxWidth * 0.02) uniqueCols.push(colMarks[i]);
                             }
 
-                            // --- 3. PROJECT GRID USING TRUE INTERSECTIONS ---
-                            // Check that we found exactly 13 rows and 13 columns!
+                            // --- PROJECT THE GRID IF EXACTLY 13 ROWS AND 13 COLS FOUND ---
                             if (uniqueRows.length === 13 && uniqueCols.length === 13) {
                                 
+                                // Set the actual Answer Key for the 25 questions (0=A, 1=B, 2=C, 3=D)
                                 const ANSWER_KEY = [
                                     0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0
                                 ];
@@ -239,7 +269,7 @@
                                 let rollNoDigits = [-1, -1, -1];
                                 let classDigits = [-1, -1];
                                 
-                                // DYNAMIC X COORDINATES! (Extracted directly from the top marks)
+                                // DYNAMIC X COORDINATES: Read straight from the physical top marks!
                                 let col1X = uniqueCols.slice(0, 4).map(m => m.x);
                                 let col2X = uniqueCols.slice(4, 8).map(m => m.x);
                                 let rollNoX = uniqueCols.slice(8, 11).map(m => m.x);
@@ -247,16 +277,17 @@
                                 
                                 let radius = maxWidth * 0.012; 
 
+                                // Reusable function to calculate bubble darkness
                                 let isBubbleFilled = function(x, y, r) {
                                     let box = new cv.Rect(x - r, y - r, r * 2, r * 2);
                                     if(box.x < 0 || box.y < 0 || box.x + box.width > maxWidth || box.y + box.height > maxHeight) return false;
                                     let roi = warpedThresh.roi(box);
                                     let fillRatio = cv.countNonZero(roi) / (box.width * box.height);
                                     roi.delete();
-                                    return fillRatio > 0.40;
+                                    return fillRatio > 0.40; // 40% shaded means filled
                                 };
 
-                                // Grade Roll No & Class
+                                // Grade Roll No & Class blocks (Rows 0 to 9)
                                 for (let i = 0; i < 10; i++) {
                                     let rowY = uniqueRows[i].y;
                                     
@@ -275,7 +306,7 @@
                                     });
                                 }
 
-                                // Grade Questions
+                                // Grade Questions 1-25
                                 for (let q = 0; q < 25; q++) {
                                     let isCol1 = (q < 13);
                                     let rowIdx = isCol1 ? q : (q - 13);
@@ -306,11 +337,13 @@
                                 let rollStr = rollNoDigits.map(d => d === -1 ? '?' : d).join('');
                                 let classStr = classDigits.map(d => d === -1 ? '?' : d).join('');
                                 
+                                // Show Final Graded Canvas
                                 canvasElement.width = maxWidth; canvasElement.height = maxHeight;
                                 canvasElement.style.display = "block"; cv.imshow('canvasOutput', warped);
                                 vidContainer.style.display = "none";
                                 scanStatus.innerText = "Scan Complete!";
                                 
+                                // Populate Final Output Display
                                 resultCard.style.display = "block";
                                 classOut.innerText = `Class: ${classStr}`;
                                 rollOut.innerText = `Roll No: ${rollStr}`;
@@ -318,10 +351,10 @@
                                 resetBtn.style.display = "block";
 
                             } else {
-                                // Provide incredibly helpful UI feedback
-                                stableFrames = 0; lastCenters = [];
+                                // HELPFUL ERROR FEEDBACK: Tells you exactly which marks are missing
+                                stableFrames = 0; lastCorners = [];
                                 scanStatus.style.backgroundColor = "#17a2b8";
-                                scanStatus.innerText = `Re-aligning... (Rows: ${uniqueRows.length}/13, Cols: ${uniqueCols.length}/13)`;
+                                scanStatus.innerText = `Analyzing... Found Rows: ${uniqueRows.length}/13, Cols: ${uniqueCols.length}/13`;
                                 autoScanInterval = setInterval(attemptAutoCapture, 500);
                             }
 
@@ -329,16 +362,17 @@
                             warpedGray.delete(); warpedThresh.delete(); lineContours.delete();
                         }
                     } else {
-                        stableFrames = 0; lastCenters = [];
+                        stableFrames = 0; lastCorners = [];
                         scanStatus.style.backgroundColor = "#007bff";
                         scanStatus.innerText = "Bring the sheet closer...";
                     }
                 } else {
-                    stableFrames = 0; lastCenters = [];
+                    stableFrames = 0; lastCorners = [];
                     scanStatus.style.backgroundColor = "#007bff";
                     scanStatus.innerText = "Fit the OMR sheet inside the frame...";
                 }
 
+                // Global Memory Cleanup
                 src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
             } catch (err) {
                 console.error("OpenCV Processing Error:", err);
@@ -348,7 +382,7 @@
         resetBtn.addEventListener('click', () => {
             canvasElement.style.display = "none"; resultCard.style.display = "none"; resetBtn.style.display = "none";
             vidContainer.style.display = "block";
-            stableFrames = 0; lastCenters = [];
+            stableFrames = 0; lastCorners = [];
             scanStatus.style.backgroundColor = "#007bff"; scanStatus.innerText = "Fit the OMR sheet inside the frame...";
             autoScanInterval = setInterval(attemptAutoCapture, 500);
         });
