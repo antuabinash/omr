@@ -9,13 +9,15 @@
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 400px; margin: 0 auto; }
         .warning-box { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 15px; border-radius: 5px; text-align: left; font-size: 14px; margin-bottom: 20px;}
         
-        /* Updated Button Styles */
+        /* Button Styles */
         button { padding: 15px 30px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; transition: background 0.3s;}
         button:disabled { background-color: #6c757d; cursor: not-allowed; }
         
         #scannerSection { display: none; margin-top: 20px; }
         video { width: 100%; border: 3px solid #333; border-radius: 8px; background: #000; }
-        canvas { display: none; /* We hide the canvas, it's just for processing */ }
+        
+        /* Canvas is hidden until we take a picture */
+        canvas { display: none; width: 100%; max-width: 400px; border: 3px solid #28a745; border-radius: 8px; margin-top: 15px; }
     </style>
     
     <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
@@ -43,26 +45,31 @@
 
     <div id="scannerSection" class="card">
         <h2>Align Sheet & Scan</h2>
+        
         <video id="cameraFeed" autoplay playsinline></video>
-        <button id="snapBtn" style="background-color: #007bff; margin-top: 10px;">Grade Sheet</button>
+        
+        <button id="snapBtn" style="background-color: #007bff; margin-top: 15px;">Grade Sheet</button>
         
         <canvas id="canvasOutput"></canvas>
     </div>
 
     <script>
+        // --- HTML ELEMENTS ---
         const agreeBtn = document.getElementById('agreeBtn');
+        const snapBtn = document.getElementById('snapBtn');
         const disclaimerSection = document.getElementById('disclaimerSection');
         const scannerSection = document.getElementById('scannerSection');
         const videoElement = document.getElementById('cameraFeed');
         const browserWarning = document.getElementById('browserWarning');
+        const canvasElement = document.getElementById('canvasOutput');
+        const canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
 
         // --- OPENCV INITIALIZATION ---
-        // This function is called automatically when opencv.js finishes loading
         function onOpenCvReady() {
             console.log("OpenCV is ready!");
             agreeBtn.disabled = false;
             agreeBtn.innerText = "I Understand, Open Camera";
-            agreeBtn.style.backgroundColor = "#28a745"; // Make it green
+            agreeBtn.style.backgroundColor = "#28a745"; 
         }
 
         // --- BROWSER CHECK ---
@@ -79,6 +86,7 @@
             scannerSection.style.display = 'block';
 
             navigator.mediaDevices.getUserMedia({ 
+                // Force back camera and limit resolution to prevent browser crashes
                 video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
             })
             .then(stream => {
@@ -86,8 +94,45 @@
             })
             .catch(error => {
                 console.error("Camera error:", error);
-                alert("Camera access is required.");
+                alert("Camera access is required to scan the OMR sheet.");
             });
+        });
+
+        // --- CAPTURE AND PROCESS IMAGE ---
+        snapBtn.addEventListener('click', () => {
+            // 1. Match canvas size to video size
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+            
+            // 2. Draw current video frame onto canvas
+            canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+
+            // 3. Process with OpenCV
+            try {
+                let src = cv.imread('canvasOutput'); // Read from canvas
+                let dst = new cv.Mat(); // Create empty matrix for result
+
+                // Convert to Grayscale
+                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
+
+                // Apply a slight blur to remove paper texture noise
+                let ksize = new cv.Size(5, 5);
+                cv.GaussianBlur(dst, dst, ksize, 0, 0, cv.BORDER_DEFAULT);
+
+                // Make canvas visible and draw the processed image back onto it
+                canvasElement.style.display = "block"; 
+                cv.imshow('canvasOutput', dst);
+
+                // FREE MEMORY (Crucial to prevent crashes!)
+                src.delete();
+                dst.delete();
+                
+                console.log("Image successfully processed!");
+
+            } catch (err) {
+                console.error("OpenCV Error:", err);
+                alert("Failed to process image. Make sure the AI Engine has loaded.");
+            }
         });
     </script>
 
