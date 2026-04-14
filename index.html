@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OMR Scanner - Auto Capture</title>
+    <title>OMR Scanner - Dual Axis</title>
     <style>
         body { font-family: sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; text-align: center; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
@@ -14,17 +14,10 @@
         .video-container { position: relative; width: 100%; max-width: 450px; margin: 0 auto; border: 3px solid #333; border-radius: 8px; overflow: hidden; background: #000; }
         video { width: 100%; display: block; }
         
-        /* NEW: A unified Document Frame locked to A4 Aspect Ratio (1 : 1.414) */
         .guide-frame { 
-            position: absolute; 
-            top: 50%; 
-            left: 50%; 
-            transform: translate(-50%, -50%); 
-            width: 75%; /* Gives some breathing room on the edges */
-            aspect-ratio: 1 / 1.4142; /* The magic A4 proportion */
-            border: 2px dashed rgba(255, 255, 255, 0.6); 
-            z-index: 10; 
-            pointer-events: none; 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            width: 75%; aspect-ratio: 1 / 1.4142; border: 2px dashed rgba(255, 255, 255, 0.6); 
+            z-index: 10; pointer-events: none; 
         }
         .corner-mark { position: absolute; width: 40px; height: 40px; border: 4px solid #4285f4; box-shadow: 0 0 8px rgba(0,0,0,0.5); }
         .tl { top: -2px; left: -2px; border-right: none; border-bottom: none; }
@@ -36,7 +29,6 @@
 
         canvas { display: none; width: 100%; border: 3px solid #28a745; border-radius: 8px; margin-top: 15px; }
         
-        /* Updated Score Display Layout */
         .result-card { display: none; background: #28a745; color: white; padding: 15px; border-radius: 8px; margin-top: 15px; text-align: left; }
         .result-card h3 { margin: 0 0 10px 0; border-bottom: 1px solid rgba(255,255,255,0.3); padding-bottom: 5px; }
         .result-card p { margin: 5px 0; font-size: 18px; font-weight: bold; }
@@ -57,18 +49,14 @@
         
         <div class="video-container" id="vidContainer">
             <video id="cameraFeed" autoplay playsinline></video>
-            <!-- NEW: Unified Guide Frame -->
             <div class="guide-frame">
-                <div class="corner-mark tl"></div>
-                <div class="corner-mark tr"></div>
-                <div class="corner-mark bl"></div>
-                <div class="corner-mark br"></div>
+                <div class="corner-mark tl"></div><div class="corner-mark tr"></div>
+                <div class="corner-mark bl"></div><div class="corner-mark br"></div>
             </div>
         </div>
         
         <canvas id="canvasOutput"></canvas>
         
-        <!-- NEW RESULTS CARD -->
         <div class="result-card" id="resultCard">
             <h3>Scan Complete</h3>
             <p id="classOut">Class: --</p>
@@ -88,7 +76,6 @@
         const canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
         const scanStatus = document.getElementById('scanStatus');
         
-        // Result elements
         const resultCard = document.getElementById('resultCard');
         const classOut = document.getElementById('classOut');
         const rollOut = document.getElementById('rollOut');
@@ -112,19 +99,18 @@
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } })
             .then(stream => {
                 videoElement.srcObject = stream;
-                autoScanInterval = setInterval(attemptAutoCapture, 500); // Check every half second
+                autoScanInterval = setInterval(attemptAutoCapture, 500); 
             })
             .catch(error => { alert("Camera access required."); });
         });
 
-        // Helper to check if phone is being held steady
         function areCentersStable(newCenters, oldCenters) {
             if (oldCenters.length !== 4) return false;
             let diff = 0;
             for(let i=0; i<4; i++) {
                 diff += Math.abs(newCenters[i].x - oldCenters[i].x) + Math.abs(newCenters[i].y - oldCenters[i].y);
             }
-            return diff < 40; // Max 10 pixels of hand shake allowed
+            return diff < 40; 
         }
 
         function attemptAutoCapture() {
@@ -165,22 +151,16 @@
                     }
                 }
 
-                // 1. THE "DON'T HURRY" LOCK (Upgraded for flexibility)
-                // Instead of requiring EXACTLY 4 squares, we accept 4 or more, and extract the outermost ones!
                 if (centers.length >= 4) {
-                    
-                    // Sort to find the extreme outer corners
                     centers.sort((a, b) => (a.x + a.y) - (b.x + b.y));
                     let tl = centers[0]; let br = centers[centers.length - 1];
                     centers.sort((a, b) => (a.x - a.y) - (b.x - b.y));
                     let bl = centers[0]; let tr = centers[centers.length - 1];
                     let sortedCenters = [tl, tr, bl, br];
 
-                    // Check if these 4 corners make a reasonably large rectangle (prevents locking onto small background noise)
                     let estimatedWidth = Math.hypot(tr.x - tl.x, tr.y - tl.y);
                     
                     if (estimatedWidth > canvasElement.width * 0.4) {
-                        
                         if (areCentersStable(sortedCenters, lastCenters)) {
                             stableFrames++;
                             scanStatus.style.backgroundColor = "#ffc107";
@@ -192,11 +172,10 @@
                         }
                         lastCenters = sortedCenters;
 
-                        // Execute Capture if stable for 4 frames!
                         if (stableFrames >= 4) {
                             clearInterval(autoScanInterval); 
                             scanStatus.style.backgroundColor = "#28a745";
-                            scanStatus.innerText = "Processing EvalBee Grid...";
+                            scanStatus.innerText = "Processing Dual-Axis Grid...";
 
                             let maxWidth = Math.max(Math.hypot(br.x - bl.x, br.y - bl.y), Math.hypot(tr.x - tl.x, tr.y - tl.y));
                             let maxHeight = Math.max(Math.hypot(tr.x - br.x, tr.y - br.y), Math.hypot(tl.x - bl.x, tl.y - bl.y));
@@ -213,37 +192,44 @@
                             let warpedThresh = new cv.Mat();
                             cv.threshold(warpedGray, warpedThresh, 150, 255, cv.THRESH_BINARY_INV);
                             
-                            // --- 2. FIND ROW SYNC MARKS (EVALBEE LOGIC) ---
-                            let rowContours = new cv.MatVector();
-                            cv.findContours(warpedThresh, rowContours, new cv.Mat(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+                            // --- 2. FIND ROW & COLUMN SYNC MARKS ---
+                            let lineContours = new cv.MatVector();
+                            cv.findContours(warpedThresh, lineContours, new cv.Mat(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
                             let rowMarks = [];
-                            for (let j = 0; j < rowContours.size(); ++j) {
-                                let bRect = cv.boundingRect(rowContours.get(j));
+                            let colMarks = [];
+                            
+                            for (let j = 0; j < lineContours.size(); ++j) {
+                                let bRect = cv.boundingRect(lineContours.get(j));
                                 let cX = bRect.x + (bRect.width / 2);
                                 let cY = bRect.y + (bRect.height / 2);
 
-                                // Sync marks are on far left (<8%), and are wide rectangles (width > height * 1.5)
+                                // Find Left Row Marks
                                 if (cX < maxWidth * 0.08 && bRect.width > bRect.height * 1.5 && bRect.width > maxWidth * 0.01) {
-                                    // Exclude corner anchors from this array
-                                    if (cY > maxHeight * 0.05 && cY < maxHeight * 0.95) {
-                                        rowMarks.push({ y: cY });
-                                    }
+                                    if (cY > maxHeight * 0.05 && cY < maxHeight * 0.95) rowMarks.push({ y: cY });
+                                }
+                                
+                                // NEW: Find Top Column Marks
+                                if (cY < maxHeight * 0.08 && bRect.height > bRect.width * 1.5 && bRect.height > maxHeight * 0.01) {
+                                    if (cX > maxWidth * 0.05 && cX < maxWidth * 0.95) colMarks.push({ x: cX });
                                 }
                             }
 
                             rowMarks.sort((a, b) => a.y - b.y);
-
-                            // Remove duplicates (sometimes OpenCV counts the same mark twice)
-                            let uniqueMarks = [];
+                            let uniqueRows = [];
                             for(let i=0; i<rowMarks.length; i++) {
-                                if (uniqueMarks.length === 0 || rowMarks[i].y - uniqueMarks[uniqueMarks.length-1].y > maxHeight * 0.02) {
-                                    uniqueMarks.push(rowMarks[i]);
-                                }
+                                if (uniqueRows.length === 0 || rowMarks[i].y - uniqueRows[uniqueRows.length-1].y > maxHeight * 0.02) uniqueRows.push(rowMarks[i]);
                             }
 
-                            // --- 3. PROJECT THE VIRTUAL GRID & GRADE WITH ANSWER KEY ---
-                            if (uniqueMarks.length === 13) {
+                            colMarks.sort((a, b) => a.x - b.x);
+                            let uniqueCols = [];
+                            for(let i=0; i<colMarks.length; i++) {
+                                if (uniqueCols.length === 0 || colMarks[i].x - uniqueCols[uniqueCols.length-1].x > maxWidth * 0.02) uniqueCols.push(colMarks[i]);
+                            }
+
+                            // --- 3. PROJECT GRID USING TRUE INTERSECTIONS ---
+                            // Check that we found exactly 13 rows and 13 columns!
+                            if (uniqueRows.length === 13 && uniqueCols.length === 13) {
                                 
                                 const ANSWER_KEY = [
                                     0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0
@@ -253,13 +239,13 @@
                                 let rollNoDigits = [-1, -1, -1];
                                 let classDigits = [-1, -1];
                                 
-                                // NEW: Updated coordinate maps to match the 3-column sheet!
-                                let col1X = [0.14, 0.20, 0.26, 0.32];
-                                let col2X = [0.44, 0.50, 0.56, 0.62];
-                                let rollNoX = [0.74, 0.78, 0.82];
-                                let classX = [0.90, 0.94];
+                                // DYNAMIC X COORDINATES! (Extracted directly from the top marks)
+                                let col1X = uniqueCols.slice(0, 4).map(m => m.x);
+                                let col2X = uniqueCols.slice(4, 8).map(m => m.x);
+                                let rollNoX = uniqueCols.slice(8, 11).map(m => m.x);
+                                let classX = uniqueCols.slice(11, 13).map(m => m.x);
                                 
-                                let radius = maxWidth * 0.012; // Adjusted for slightly smaller bubbles
+                                let radius = maxWidth * 0.012; 
 
                                 let isBubbleFilled = function(x, y, r) {
                                     let box = new cv.Rect(x - r, y - r, r * 2, r * 2);
@@ -270,52 +256,44 @@
                                     return fillRatio > 0.40;
                                 };
 
-                                // --- 3A. READ ROLL NUMBER & CLASS (Rows 0-9) ---
+                                // Grade Roll No & Class
                                 for (let i = 0; i < 10; i++) {
-                                    let rowY = uniqueMarks[i].y;
+                                    let rowY = uniqueRows[i].y;
                                     
-                                    // Parse 4 Roll No columns
-                                    rollNoX.forEach((xPct, cIdx) => {
-                                        let x = maxWidth * xPct;
+                                    rollNoX.forEach((x, cIdx) => {
                                         if (isBubbleFilled(x, rowY, radius)) {
-                                            rollNoDigits[cIdx] = i; // Save the digit (0-9)
+                                            rollNoDigits[cIdx] = i; 
                                             cv.circle(warped, new cv.Point(x, rowY), Math.round(radius), [0, 255, 0, 255], 3); 
-                                        } else {
-                                            cv.circle(warped, new cv.Point(x, rowY), Math.round(radius), [200, 200, 200, 255], 2);
-                                        }
+                                        } else cv.circle(warped, new cv.Point(x, rowY), Math.round(radius), [200, 200, 200, 255], 2);
                                     });
 
-                                    // Parse 2 Class columns
-                                    classX.forEach((xPct, cIdx) => {
-                                        let x = maxWidth * xPct;
+                                    classX.forEach((x, cIdx) => {
                                         if (isBubbleFilled(x, rowY, radius)) {
                                             classDigits[cIdx] = i; 
                                             cv.circle(warped, new cv.Point(x, rowY), Math.round(radius), [0, 255, 0, 255], 3);
-                                        } else {
-                                            cv.circle(warped, new cv.Point(x, rowY), Math.round(radius), [200, 200, 200, 255], 2);
-                                        }
+                                        } else cv.circle(warped, new cv.Point(x, rowY), Math.round(radius), [200, 200, 200, 255], 2);
                                     });
                                 }
 
-                                // --- 3B. GRADE QUESTIONS 1 TO 25 (Rows 0-12) ---
+                                // Grade Questions
                                 for (let q = 0; q < 25; q++) {
                                     let isCol1 = (q < 13);
                                     let rowIdx = isCol1 ? q : (q - 13);
-                                    let rowY = uniqueMarks[rowIdx].y;
-                                    let xPcts = isCol1 ? col1X : col2X;
+                                    let rowY = uniqueRows[rowIdx].y;
+                                    let trueXArr = isCol1 ? col1X : col2X;
                                     
                                     let expectedAns = ANSWER_KEY[q];
                                     let filledOptions = [];
                                     
                                     for (let opt = 0; opt < 4; opt++) {
-                                        if (isBubbleFilled(maxWidth * xPcts[opt], rowY, radius)) filledOptions.push(opt);
+                                        if (isBubbleFilled(trueXArr[opt], rowY, radius)) filledOptions.push(opt);
                                     }
                                     
                                     let isCorrect = (filledOptions.length === 1 && filledOptions[0] === expectedAns);
                                     if (isCorrect) correctAnswers++;
 
                                     for (let opt = 0; opt < 4; opt++) {
-                                        let center = new cv.Point(maxWidth * xPcts[opt], rowY);
+                                        let center = new cv.Point(trueXArr[opt], rowY);
                                         let filled = filledOptions.includes(opt);
                                         if (filled) {
                                             cv.circle(warped, center, Math.round(radius), isCorrect ? [0, 255, 0, 255] : [255, 0, 0, 255], 4);
@@ -325,51 +303,38 @@
                                     }
                                 }
                                 
-                                // Format the Roll No and Class strings (handles blank bubbles gracefully)
                                 let rollStr = rollNoDigits.map(d => d === -1 ? '?' : d).join('');
                                 let classStr = classDigits.map(d => d === -1 ? '?' : d).join('');
                                 
-                                // Display final UI
-                                canvasElement.width = maxWidth;
-                                canvasElement.height = maxHeight;
-                                canvasElement.style.display = "block"; 
-                                cv.imshow('canvasOutput', warped);
-                                
+                                canvasElement.width = maxWidth; canvasElement.height = maxHeight;
+                                canvasElement.style.display = "block"; cv.imshow('canvasOutput', warped);
                                 vidContainer.style.display = "none";
                                 scanStatus.innerText = "Scan Complete!";
                                 
-                                // Update Results Card
                                 resultCard.style.display = "block";
                                 classOut.innerText = `Class: ${classStr}`;
                                 rollOut.innerText = `Roll No: ${rollStr}`;
                                 scoreOut.innerText = `Score: ${correctAnswers} / 25`; 
-                                
                                 resetBtn.style.display = "block";
 
                             } else {
-                                // If we didn't find all 13 marks, fail silently and resume scanning loop
-                                // This removes the red "Error" flash and makes the UX much smoother
-                                stableFrames = 0;
-                                lastCenters = [];
+                                // Provide incredibly helpful UI feedback
+                                stableFrames = 0; lastCenters = [];
                                 scanStatus.style.backgroundColor = "#17a2b8";
-                                scanStatus.innerText = "Re-aligning sheet...";
+                                scanStatus.innerText = `Re-aligning... (Rows: ${uniqueRows.length}/13, Cols: ${uniqueCols.length}/13)`;
                                 autoScanInterval = setInterval(attemptAutoCapture, 500);
                             }
 
-                            // Memory cleanup
                             srcTri.delete(); dstTri.delete(); M.delete(); warped.delete();
-                            warpedGray.delete(); warpedThresh.delete(); rowContours.delete();
+                            warpedGray.delete(); warpedThresh.delete(); lineContours.delete();
                         }
                     } else {
-                        // Estimated width is too small
-                        stableFrames = 0;
-                        lastCenters = [];
+                        stableFrames = 0; lastCenters = [];
                         scanStatus.style.backgroundColor = "#007bff";
                         scanStatus.innerText = "Bring the sheet closer...";
                     }
                 } else {
-                    stableFrames = 0;
-                    lastCenters = [];
+                    stableFrames = 0; lastCenters = [];
                     scanStatus.style.backgroundColor = "#007bff";
                     scanStatus.innerText = "Fit the OMR sheet inside the frame...";
                 }
@@ -380,18 +345,11 @@
             }
         }
 
-        // Scan Another Sheet Logic
         resetBtn.addEventListener('click', () => {
-            canvasElement.style.display = "none";
-            resultCard.style.display = "none";
-            resetBtn.style.display = "none";
+            canvasElement.style.display = "none"; resultCard.style.display = "none"; resetBtn.style.display = "none";
             vidContainer.style.display = "block";
-            
-            stableFrames = 0;
-            lastCenters = [];
-            scanStatus.style.backgroundColor = "#007bff";
-            scanStatus.innerText = "Fit the OMR sheet inside the frame...";
-            
+            stableFrames = 0; lastCenters = [];
+            scanStatus.style.backgroundColor = "#007bff"; scanStatus.innerText = "Fit the OMR sheet inside the frame...";
             autoScanInterval = setInterval(attemptAutoCapture, 500);
         });
     </script>
