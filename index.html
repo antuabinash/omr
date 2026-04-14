@@ -3,27 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OMR Scanner - Ultra Forgiving</title>
+    <title>OMR Scanner - Landscape Edition</title>
     <style>
         body { font-family: sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; text-align: center; }
-        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 550px; margin: 0 auto; }
         
         button { padding: 15px 30px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s;}
         button:disabled { background-color: #6c757d; cursor: not-allowed; }
         
         #scannerSection { display: none; margin-top: 20px; }
-        .video-container { position: relative; width: 100%; max-width: 450px; margin: 0 auto; border: 3px solid #333; border-radius: 8px; overflow: hidden; background: #000; }
+        .video-container { position: relative; width: 100%; margin: 0 auto; border: 3px solid #333; border-radius: 8px; overflow: hidden; background: #000; }
         video { width: 100%; display: block; }
         
-        /* 1:1.5 Aspect Ratio Guide Container */
-        .guide-container { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 70%; aspect-ratio: 1 / 1.5; z-index: 10; pointer-events: none; }
+        /* 1.5 : 1 Aspect Ratio Guide Container (Landscape) */
+        .guide-container { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; aspect-ratio: 1.5 / 1; z-index: 10; pointer-events: none; }
         
         /* 4 Dynamic Target Squares */
         .target-square { position: absolute; width: 45px; height: 45px; border: 3px solid #007bff; background-color: rgba(0, 123, 255, 0.1); box-shadow: 0 0 10px rgba(0,0,0,0.5); border-radius: 4px; transition: all 0.2s; }
-        .ts-tl { top: -15px; left: -15px; }
-        .ts-tr { top: -15px; right: -15px; }
-        .ts-bl { bottom: -15px; left: -15px; }
-        .ts-br { bottom: -15px; right: -15px; }
+        .ts-tl { top: -10px; left: -10px; }
+        .ts-tr { top: -10px; right: -10px; }
+        .ts-bl { bottom: -10px; left: -10px; }
+        .ts-br { bottom: -10px; right: -10px; }
 
         .status-text { background: #007bff; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; transition: background 0.3s;}
 
@@ -118,7 +118,6 @@
             }).catch(error => { alert(`Camera Failed: ${error.message}`); });
         });
 
-        // Doubled the shake tolerance to make it easier to lock on
         function areCentersStable(newCenters, oldCenters) {
             if (oldCenters.length !== 4) return false;
             let diff = 0;
@@ -139,8 +138,6 @@
                 let thresh = new cv.Mat();
                 
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                
-                // MASSIVE UPGRADE: OTSU Thresholding automatically cuts through screen glare and shadows!
                 cv.threshold(gray, thresh, 0, 255, cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
 
                 let contours = new cv.MatVector();
@@ -154,14 +151,12 @@
                     let bRect = cv.boundingRect(cnt);
                     let markerAspectRatio = bRect.width / bRect.height;
 
-                    // MASSIVE UPGRADE 2: Removed strict polygon checking. Any blob roughly square and big enough counts!
                     if (area > 150 && area < 25000 && markerAspectRatio >= 0.6 && markerAspectRatio <= 1.4) { 
                         cornerRects.push(bRect);
                     }
                 }
 
                 if (cornerRects.length >= 4) {
-                    // Sorting automatically discards bubbles and grabs the 4 extreme anchors
                     cornerRects.sort((a, b) => (a.x + a.y) - (b.x + b.y));
                     let tlRect = cornerRects[0]; let brRect = cornerRects[cornerRects.length - 1];
                     cornerRects.sort((a, b) => (a.x - a.y) - (b.x - b.y));
@@ -175,30 +170,31 @@
                     let sortedCorners = [tl, tr, bl, br];
                     let estimatedWidth = Math.hypot(tr.x - tl.x, tr.y - tl.y);
                     
-                    if (estimatedWidth > canvasElement.width * 0.3) {
+                    if (estimatedWidth > canvasElement.width * 0.4) {
                         
                         if (areCentersStable(sortedCorners, lastCenters)) {
                             stableFrames++;
                             scanStatus.style.backgroundColor = "#ffc107";
                             scanStatus.innerText = `Holding steady... ${stableFrames}/4`;
-                            setTargetColor("#ffc107", "rgba(255, 193, 7, 0.2)"); // Yellow UI
+                            setTargetColor("#ffc107", "rgba(255, 193, 7, 0.2)"); 
                         } else {
                             stableFrames = 1;
                             scanStatus.style.backgroundColor = "#17a2b8";
                             scanStatus.innerText = "Aligning...";
-                            setTargetColor("#17a2b8", "rgba(23, 162, 184, 0.2)"); // Light Blue UI
+                            setTargetColor("#17a2b8", "rgba(23, 162, 184, 0.2)"); 
                         }
                         lastCenters = sortedCorners;
 
                         if (stableFrames >= 4) {
                             clearInterval(autoScanInterval); 
                             scanStatus.style.backgroundColor = "#28a745";
-                            scanStatus.innerText = "Processing Grid...";
-                            setTargetColor("#28a745", "rgba(40, 167, 69, 0.3)"); // Green UI Lock
+                            scanStatus.innerText = "Processing 1.5:1 Grid...";
+                            setTargetColor("#28a745", "rgba(40, 167, 69, 0.3)"); 
 
+                            // PERFECT 1.5 : 1 WARP MATH (Wider than it is tall)
                             let maxWidth = Math.max(Math.hypot(br.x - bl.x, br.y - bl.y), Math.hypot(tr.x - tl.x, tr.y - tl.y));
                             let outputWidth = maxWidth;
-                            let outputHeight = outputWidth * 1.5; // Force 1:1.5 Aspect Ratio
+                            let outputHeight = outputWidth / 1.5; // Divide by 1.5 to get the shorter height
 
                             let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
                             let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, outputWidth, 0, outputWidth, outputHeight, 0, outputHeight]);
@@ -211,7 +207,7 @@
                             let warpedThresh = new cv.Mat();
                             cv.threshold(warpedGray, warpedThresh, 150, 255, cv.THRESH_BINARY_INV);
                             
-                            // FIND 24 ROW SYNC MARKS
+                            // FIND 13 ROW SYNC MARKS
                             let rowContours = new cv.MatVector();
                             cv.findContours(warpedThresh, rowContours, new cv.Mat(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
@@ -221,8 +217,9 @@
                                 let cX = bRect.x + (bRect.width / 2);
                                 let cY = bRect.y + (bRect.height / 2);
 
-                                if (cX < outputWidth * 0.10 && bRect.width > bRect.height * 1.5 && bRect.width > outputWidth * 0.01) {
-                                    if (cY > outputHeight * 0.02 && cY < outputHeight * 0.98) rowMarks.push({ y: cY });
+                                // Marks are on the far left
+                                if (cX < outputWidth * 0.08 && bRect.width > bRect.height * 1.5 && bRect.width > outputWidth * 0.01) {
+                                    if (cY > outputHeight * 0.05 && cY < outputHeight * 0.95) rowMarks.push({ y: cY });
                                 }
                             }
 
@@ -230,13 +227,13 @@
 
                             let uniqueMarks = [];
                             for(let i=0; i<rowMarks.length; i++) {
-                                if (uniqueMarks.length === 0 || rowMarks[i].y - uniqueMarks[uniqueMarks.length-1].y > outputHeight * 0.015) {
+                                if (uniqueMarks.length === 0 || rowMarks[i].y - uniqueMarks[uniqueMarks.length-1].y > outputHeight * 0.02) {
                                     uniqueMarks.push(rowMarks[i]);
                                 }
                             }
 
-                            // GRADE THE SHEET IF 24 MARKS ARE FOUND
-                            if (uniqueMarks.length === 24) {
+                            // GRADE THE SHEET IF 13 MARKS ARE FOUND
+                            if (uniqueMarks.length === 13) {
                                 
                                 const ANSWER_KEY = [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0];
 
@@ -244,12 +241,13 @@
                                 let rollNoDigits = [-1, -1, -1, -1];
                                 let classDigits = [-1, -1];
                                 
-                                let rollNoX = [0.15, 0.21, 0.27, 0.33];
-                                let classX = [0.75, 0.81];
-                                let col1X = [0.16, 0.24, 0.32, 0.40];
-                                let col2X = [0.66, 0.74, 0.82, 0.90];
+                                // Coordinates matching the HTML exactly
+                                let rollNoX = [0.14, 0.19, 0.24, 0.29];
+                                let classX = [0.39, 0.44];
+                                let col1X = [0.56, 0.61, 0.66, 0.71];
+                                let col2X = [0.81, 0.86, 0.91, 0.96];
                                 
-                                let radius = outputWidth * 0.013; 
+                                let radius = outputWidth * 0.012; 
 
                                 let isBubbleFilled = function(x, y, r) {
                                     let box = new cv.Rect(Math.max(0, x - r), Math.max(0, y - r), r * 2, r * 2);
@@ -260,7 +258,7 @@
                                     return fillRatio > 0.40; 
                                 };
 
-                                // 1. Grade Roll No & Class (Rows 0-9)
+                                // 1. Grade Roll No & Class (First 10 Rows)
                                 for (let i = 0; i < 10; i++) {
                                     let rowY = uniqueMarks[i].y;
                                     
@@ -277,10 +275,10 @@
                                     });
                                 }
 
-                                // 2. Grade Questions (Rows 11-23)
+                                // 2. Grade Questions 1-25 (All 13 Rows)
                                 for (let q = 0; q < 25; q++) {
                                     let isCol1 = (q < 13);
-                                    let rowIdx = isCol1 ? (q + 11) : ((q - 13) + 11); 
+                                    let rowIdx = isCol1 ? q : (q - 13);
                                     let rowY = uniqueMarks[rowIdx].y;
                                     let xPcts = isCol1 ? col1X : col2X;
                                     
@@ -321,7 +319,7 @@
                             } else {
                                 stableFrames = 0; lastCenters = [];
                                 scanStatus.style.backgroundColor = "#17a2b8";
-                                scanStatus.innerText = `Re-aligning... Found ${uniqueMarks.length}/24 marks.`;
+                                scanStatus.innerText = `Re-aligning... Found ${uniqueMarks.length}/13 marks.`;
                                 setTargetColor("#17a2b8", "rgba(23, 162, 184, 0.2)");
                                 autoScanInterval = setInterval(attemptAutoCapture, 500);
                             }
