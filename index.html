@@ -3,24 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OMR Scanner - Grader Edition</title>
+    <title>OMR Scanner - Final Edition</title>
     <style>
         body { font-family: sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; text-align: center; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
         
-        button { padding: 15px 30px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; }
+        button { padding: 15px 30px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s;}
         button:disabled { background-color: #6c757d; cursor: not-allowed; }
         
         #scannerSection { display: none; margin-top: 20px; }
         .video-container { position: relative; width: 100%; max-width: 450px; margin: 0 auto; border: 3px solid #333; border-radius: 8px; overflow: hidden; background: #000; }
         video { width: 100%; display: block; }
         
-        /* Document Frame locked to A4 Aspect Ratio */
-        .guide-frame { 
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-            width: 75%; aspect-ratio: 1 / 1.4142; border: 2px dashed rgba(255, 255, 255, 0.6); 
-            z-index: 10; pointer-events: none; 
-        }
+        /* A4 Proportional Guide Frame */
+        .guide-frame { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 75%; aspect-ratio: 1 / 1.4142; border: 2px dashed rgba(255, 255, 255, 0.6); z-index: 10; pointer-events: none; }
         .corner-mark { position: absolute; width: 40px; height: 40px; border: 4px solid #4285f4; box-shadow: 0 0 8px rgba(0,0,0,0.5); }
         .tl { top: -2px; left: -2px; border-right: none; border-bottom: none; }
         .tr { top: -2px; right: -2px; border-left: none; border-bottom: none; }
@@ -37,7 +33,7 @@
     <script>
         window.onOpenCvReady = function() {
             document.getElementById('agreeBtn').disabled = false;
-            document.getElementById('agreeBtn').innerText = "Start Auto-Scanner";
+            document.getElementById('agreeBtn').innerText = "Start Camera Scanner";
         };
     </script>
     <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.onOpenCvReady();" type="text/javascript"></script>
@@ -66,6 +62,7 @@
     </div>
 
     <script>
+        // UI Elements
         const agreeBtn = document.getElementById('agreeBtn');
         const disclaimerSection = document.getElementById('disclaimerSection');
         const scannerSection = document.getElementById('scannerSection');
@@ -82,7 +79,13 @@
         let stableFrames = 0;
         let lastCenters = [];
 
+        // START CAMERA
         agreeBtn.addEventListener('click', () => {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                alert("CAMERA BLOCKED: Please ensure you are using a secure connection (HTTPS) or localhost.");
+                return;
+            }
+
             disclaimerSection.style.display = 'none';
             scannerSection.style.display = 'block';
 
@@ -91,9 +94,13 @@
                 videoElement.srcObject = stream;
                 autoScanInterval = setInterval(attemptAutoCapture, 500); 
             })
-            .catch(error => { alert("Camera access required."); });
+            .catch(error => { 
+                console.error(error);
+                alert(`Camera Failed to Start: ${error.message}`); 
+            });
         });
 
+        // STABILITY CHECK
         function areCentersStable(newCenters, oldCenters) {
             if (oldCenters.length !== 4) return false;
             let diff = 0;
@@ -103,6 +110,7 @@
             return diff < 40; 
         }
 
+        // MAIN AI SCAN LOOP
         function attemptAutoCapture() {
             if (videoElement.videoWidth === 0) return; 
 
@@ -123,7 +131,7 @@
                 let hierarchy = new cv.Mat();
                 cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-                let centers = []; 
+                let cornerRects = []; 
 
                 for (let i = 0; i < contours.size(); ++i) {
                     let cnt = contours.get(i);
@@ -131,28 +139,40 @@
                     let bRect = cv.boundingRect(cnt);
                     let markerAspectRatio = bRect.width / bRect.height;
 
-                    if (area > 300 && area < 10000 && markerAspectRatio >= 0.7 && markerAspectRatio <= 1.3) { 
+                    if (area > 300 && area < 15000 && markerAspectRatio >= 0.7 && markerAspectRatio <= 1.3) { 
                         let perimeter = cv.arcLength(cnt, true);
                         let approx = new cv.Mat();
                         cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
 
-                        if (approx.rows === 4) centers.push({ x: bRect.x + (bRect.width / 2), y: bRect.y + (bRect.height / 2) });
+                        if (approx.rows === 4) {
+                            cornerRects.push(bRect);
+                        }
                         approx.delete();
                     }
                 }
 
-                if (centers.length >= 4) {
-                    centers.sort((a, b) => (a.x + a.y) - (b.x + b.y));
-                    let tl = centers[0]; let br = centers[centers.length - 1];
-                    centers.sort((a, b) => (a.x - a.y) - (b.x - b.y));
-                    let bl = centers[0]; let tr = centers[centers.length - 1];
-                    let sortedCenters = [tl, tr, bl, br];
+                if (cornerRects.length >= 4) {
+                    // Sort to find 4 outermost corners
+                    cornerRects.sort((a, b) => (a.x + a.y) - (b.x + b.y));
+                    let tlRect = cornerRects[0]; 
+                    let brRect = cornerRects[cornerRects.length - 1];
+                    
+                    cornerRects.sort((a, b) => (a.x - a.y) - (b.x - b.y));
+                    let blRect = cornerRects[0]; 
+                    let trRect = cornerRects[cornerRects.length - 1];
 
+                    // Use OUTER boundaries to avoid cutting off sync marks
+                    let tl = { x: tlRect.x, y: tlRect.y };
+                    let tr = { x: trRect.x + trRect.width, y: trRect.y };
+                    let bl = { x: blRect.x, y: blRect.y + blRect.height };
+                    let br = { x: brRect.x + brRect.width, y: brRect.y + brRect.height };
+                    
+                    let sortedCorners = [tl, tr, bl, br];
                     let estimatedWidth = Math.hypot(tr.x - tl.x, tr.y - tl.y);
                     
                     if (estimatedWidth > canvasElement.width * 0.4) {
                         
-                        if (areCentersStable(sortedCenters, lastCenters)) {
+                        if (areCentersStable(sortedCorners, lastCenters)) {
                             stableFrames++;
                             scanStatus.style.backgroundColor = "#ffc107";
                             scanStatus.innerText = `Holding steady... ${stableFrames}/4`;
@@ -161,9 +181,9 @@
                             scanStatus.style.backgroundColor = "#17a2b8";
                             scanStatus.innerText = "Aligning...";
                         }
-                        lastCenters = sortedCenters;
+                        lastCenters = sortedCorners;
 
-                        // CAPTURE TRIGGER
+                        // LOCK ON AND CAPTURE!
                         if (stableFrames >= 4) {
                             clearInterval(autoScanInterval); 
                             scanStatus.style.backgroundColor = "#28a745";
@@ -172,6 +192,7 @@
                             let maxWidth = Math.max(Math.hypot(br.x - bl.x, br.y - bl.y), Math.hypot(tr.x - tl.x, tr.y - tl.y));
                             let maxHeight = Math.max(Math.hypot(tr.x - br.x, tr.y - br.y), Math.hypot(tl.x - bl.x, tl.y - bl.y));
 
+                            // Flatten Image
                             let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
                             let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, maxWidth, 0, maxWidth, maxHeight, 0, maxHeight]);
                             let M = cv.getPerspectiveTransform(srcTri, dstTri);
@@ -193,7 +214,8 @@
                                 let cX = bRect.x + (bRect.width / 2);
                                 let cY = bRect.y + (bRect.height / 2);
 
-                                if (cX < maxWidth * 0.08 && bRect.width > bRect.height * 1.5 && bRect.width > maxWidth * 0.01) {
+                                // Mark must be on the left edge (x < 12%) and wide
+                                if (cX < maxWidth * 0.12 && bRect.width > bRect.height * 1.5 && bRect.width > maxWidth * 0.01) {
                                     if (cY > maxHeight * 0.05 && cY < maxHeight * 0.95) {
                                         rowMarks.push({ y: cY });
                                     }
@@ -209,10 +231,10 @@
                                 }
                             }
 
-                            // IF 13 ROW MARKS FOUND -> GRADE!
+                            // GRADE THE SHEET IF 13 MARKS ARE FOUND
                             if (uniqueMarks.length === 13) {
                                 
-                                // THE ANSWER KEY! (0=A, 1=B, 2=C, 3=D)
+                                // THE ANSWER KEY (0=A, 1=B, 2=C, 3=D)
                                 const ANSWER_KEY = [
                                     0, 1, 2, 3, 0, // Q1-5
                                     1, 2, 3, 0, 1, // Q6-10
@@ -223,6 +245,7 @@
 
                                 let correctAnswers = 0;
                                 
+                                // X coordinates based on your sheet layout
                                 let col1X = [0.20, 0.28, 0.36, 0.44];
                                 let col2X = [0.66, 0.74, 0.82, 0.90];
                                 let radius = maxWidth * 0.015;
@@ -233,7 +256,7 @@
                                     let roi = warpedThresh.roi(box);
                                     let fillRatio = cv.countNonZero(roi) / (box.width * box.height);
                                     roi.delete();
-                                    return fillRatio > 0.40;
+                                    return fillRatio > 0.40; // 40% ink density
                                 };
 
                                 for (let q = 0; q < 25; q++) {
@@ -276,25 +299,29 @@
                                     }
                                 }
                                 
+                                // Show Graded Canvas
                                 canvasElement.width = maxWidth;
                                 canvasElement.height = maxHeight;
                                 canvasElement.style.display = "block"; 
                                 cv.imshow('canvasOutput', warped);
                                 
                                 vidContainer.style.display = "none";
+                                scanStatus.style.backgroundColor = "#28a745";
                                 scanStatus.innerText = "Scan Complete!";
                                 scoreDisplay.style.display = "block";
                                 scoreDisplay.innerText = `Score: ${correctAnswers} / 25`; 
                                 resetBtn.style.display = "block"; 
 
                             } else {
+                                // Provide feedback if marks are missed
                                 stableFrames = 0;
                                 lastCenters = [];
                                 scanStatus.style.backgroundColor = "#17a2b8";
-                                scanStatus.innerText = "Re-aligning sheet...";
+                                scanStatus.innerText = `Re-aligning... Found ${uniqueMarks.length}/13 row marks.`;
                                 autoScanInterval = setInterval(attemptAutoCapture, 500);
                             }
 
+                            // Memory Cleanup
                             srcTri.delete(); dstTri.delete(); M.delete(); warped.delete();
                             warpedGray.delete(); warpedThresh.delete(); rowContours.delete();
                         }
@@ -312,10 +339,12 @@
                 }
 
                 src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
-            } catch (err) {}
+            } catch (err) {
+                // Silently catch frame errors during live scan
+            }
         }
 
-        // SCAN NEXT SHEET LOGIC
+        // RESET SCANNER
         resetBtn.addEventListener('click', () => {
             canvasElement.style.display = "none";
             scoreDisplay.style.display = "none";
