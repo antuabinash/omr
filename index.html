@@ -1,1116 +1,432 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OMR Grader · Scanner</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OMR Scanner</title>
+    <!-- Load OpenCV.js -->
+    <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();"></script>
+    <style>
+        body { margin: 0; padding: 0; background-color: #111; color: white; font-family: sans-serif; overflow: hidden; }
+        
+        #app-container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        
+        #video-container { position: relative; flex-grow: 1; overflow: hidden; display: flex; justify-content: center; align-items: center; }
+        
+        /* Video and overlay stack */
+        video { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+        #debugCanvas { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 2; pointer-events: none; }
+        
+        /* Dashed Document Frame (1:1.414 Aspect Ratio) */
+        #doc-frame {
+            position: absolute;
+            z-index: 3;
+            width: 85%;
+            max-width: 500px;
+            aspect-ratio: 1 / 1.414;
+            border: 2px dashed rgba(255, 255, 255, 0.5);
+            pointer-events: none;
+            box-sizing: border-box;
+        }
 
-<!-- OpenCV.js from CDN -->
-<script async src="https://docs.opencv.org/4.8.0/opencv.js"
-        onload="onOpenCvReady()"
-        onerror="onOpenCvError()"></script>
+        /* Blue Corner Brackets */
+        .bracket { position: absolute; width: 30px; height: 30px; border-color: #3b82f6; border-style: solid; }
+        .br-tl { top: -2px; left: -2px; border-width: 4px 0 0 4px; }
+        .br-tr { top: -2px; right: -2px; border-width: 4px 4px 0 0; }
+        .br-bl { bottom: -2px; left: -2px; border-width: 0 0 4px 4px; }
+        .br-br { bottom: -2px; right: -2px; border-width: 0 4px 4px 0; }
 
-<style>
-/* ══════════════════════════════════════════
-   DESIGN SYSTEM
-   Aesthetic: Precision Instrument – dark,
-   monochrome, amber accent. Think oscilloscope.
-══════════════════════════════════════════ */
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;700&display=swap');
+        /* Output View */
+        #output-container {
+            display: none;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #222; z-index: 10;
+            flex-direction: column; align-items: center;
+        }
+        #outputCanvas { max-width: 95%; max-height: 70vh; margin-top: 20px; border: 2px solid #444; border-radius: 8px; box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
+        
+        /* UI Elements */
+        #score-banner { display: none; background: #22c55e; color: white; padding: 15px 40px; font-size: 28px; font-weight: bold; border-radius: 8px; margin-top: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        .btn { padding: 15px 30px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+        .btn:disabled { background: #555; cursor: not-allowed; }
+        
+        #loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #111; z-index: 20; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .spinner { border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid white; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-:root {
-  --bg:        #0d0d0f;
-  --surface:   #151518;
-  --border:    #2a2a30;
-  --amber:     #f5a623;
-  --amber-dim: #8a5c0f;
-  --green:     #30c97e;
-  --red:       #e8415a;
-  --blue:      #4a9eff;
-  --text:      #e8e8ec;
-  --muted:     #666672;
-  --mono:      'IBM Plex Mono', monospace;
-  --sans:      'IBM Plex Sans', sans-serif;
-}
-
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-html, body {
-  width: 100%; height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--sans);
-  overflow: hidden;
-}
-
-/* ── App Shell ───────────────────────────── */
-#app {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-}
-
-/* ── Top Bar ─────────────────────────────── */
-#topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 20px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  z-index: 10;
-}
-
-.brand {
-  font-family: var(--mono);
-  font-weight: 700;
-  font-size: 14px;
-  letter-spacing: 0.12em;
-  color: var(--amber);
-  text-transform: uppercase;
-}
-
-.brand span { color: var(--muted); font-weight: 400; }
-
-#status-badge {
-  font-family: var(--mono);
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 20px;
-  border: 1px solid var(--border);
-  color: var(--muted);
-  background: var(--bg);
-  transition: all 0.3s;
-  letter-spacing: 0.06em;
-}
-#status-badge.ready   { border-color: var(--green); color: var(--green); }
-#status-badge.loading { border-color: var(--amber); color: var(--amber); }
-#status-badge.locked  { border-color: var(--blue);  color: var(--blue);  }
-#status-badge.graded  { border-color: var(--amber); color: var(--amber); }
-#status-badge.error   { border-color: var(--red);   color: var(--red);   }
-
-/* ── Main Viewport ───────────────────────── */
-#viewport {
-  flex: 1;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #000;
-}
-
-/* Live camera feed */
-#video {
-  position: absolute;
-  width: 100%; height: 100%;
-  object-fit: cover;
-}
-
-/* Hidden processing canvas */
-#hidden-canvas { display: none; }
-
-/* Result canvas (shown after grading) */
-#result-canvas {
-  display: none;
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-}
-
-/* ── A4 Guide Frame Overlay ──────────────── */
-/* A4 ratio = 1 : 1.4142 → width/height = 0.7071 */
-#guide-frame {
-  position: absolute;
-  /* sized by JS to fit viewport maintaining A4 ratio */
-  border: 2px dashed rgba(255,255,255,0.18);
-  pointer-events: none;
-  transition: border-color 0.3s;
-}
-#guide-frame.locked { border-color: rgba(74,158,255,0.5); }
-
-/* Blue corner brackets */
-#guide-frame::before,
-#guide-frame::after,
-.guide-br::before,
-.guide-br::after {
-  content: '';
-  position: absolute;
-  width: 22px; height: 22px;
-  border-color: var(--blue);
-  border-style: solid;
-}
-/* top-left */
-#guide-frame::before {
-  top: -2px; left: -2px;
-  border-width: 3px 0 0 3px;
-}
-/* top-right */
-#guide-frame::after {
-  top: -2px; right: -2px;
-  border-width: 3px 3px 0 0;
-}
-/* bottom-left */
-.guide-br::before {
-  bottom: -2px; left: -2px;
-  border-width: 0 0 3px 3px;
-}
-/* bottom-right */
-.guide-br::after {
-  bottom: -2px; right: -2px;
-  border-width: 0 3px 3px 0;
-}
-
-/* ── Stability Indicator ─────────────────── */
-#stability-bar-wrap {
-  position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 160px;
-  pointer-events: none;
-}
-#stability-label {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--muted);
-  text-align: center;
-  margin-bottom: 4px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-#stability-bar-bg {
-  height: 3px;
-  background: var(--border);
-  border-radius: 2px;
-  overflow: hidden;
-}
-#stability-bar {
-  height: 100%;
-  width: 0%;
-  background: var(--blue);
-  border-radius: 2px;
-  transition: width 0.2s, background 0.3s;
-}
-#stability-bar.full { background: var(--green); }
-
-/* ── Bottom Controls Bar ─────────────────── */
-#controls {
-  padding: 14px 20px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.btn {
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 9px 20px;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: all 0.18s;
-  outline: none;
-}
-.btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
-.btn-primary {
-  background: var(--amber);
-  color: #000;
-  border-color: var(--amber);
-}
-.btn-primary:not(:disabled):hover {
-  background: #ffc043;
-  box-shadow: 0 0 18px rgba(245,166,35,0.35);
-}
-
-.btn-ghost {
-  background: transparent;
-  color: var(--text);
-  border-color: var(--border);
-}
-.btn-ghost:not(:disabled):hover {
-  border-color: var(--amber);
-  color: var(--amber);
-}
-
-#debug-info {
-  margin-left: auto;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--muted);
-  letter-spacing: 0.04em;
-}
-
-/* ── Score Banner (shown post-grade) ────── */
-#score-banner {
-  display: none;
-  position: absolute;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(13,13,15,0.92);
-  border: 1.5px solid var(--amber);
-  border-radius: 10px;
-  padding: 12px 28px;
-  text-align: center;
-  backdrop-filter: blur(8px);
-  z-index: 20;
-}
-#score-value {
-  font-family: var(--mono);
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--amber);
-  line-height: 1;
-}
-#score-label {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--muted);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  margin-top: 3px;
-}
-
-/* ── Loading Screen ──────────────────────── */
-#loading-screen {
-  position: fixed;
-  inset: 0;
-  background: var(--bg);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  z-index: 100;
-}
-.spinner {
-  width: 36px; height: 36px;
-  border: 3px solid var(--border);
-  border-top-color: var(--amber);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-#loading-screen p {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--muted);
-  letter-spacing: 0.1em;
-}
-</style>
+        #toast { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(255,50,50,0.9); padding: 10px 20px; border-radius: 5px; z-index: 50; display: none; font-weight: bold; }
+    </style>
 </head>
 <body>
 
-<!-- Loading screen while OpenCV initialises -->
-<div id="loading-screen">
-  <div class="spinner"></div>
-  <p id="loading-msg">LOADING OPENCV.JS…</p>
+<div id="loading-overlay">
+    <div class="spinner"></div>
+    <h2 id="loading-text">Loading OpenCV.js...</h2>
 </div>
 
-<!-- ══════════════════════════════════
-     MAIN APP SHELL
-══════════════════════════════════ -->
-<div id="app" style="display:none">
+<div id="toast">Error parsing sheet</div>
 
-  <!-- Top Bar -->
-  <div id="topbar">
-    <div class="brand">OMR<span> · </span>Grader</div>
-    <div id="status-badge" class="loading">Initializing</div>
-  </div>
-
-  <!-- Main Viewport -->
-  <div id="viewport">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="hidden-canvas"></canvas>
-    <canvas id="result-canvas"></canvas>
-
-    <!-- A4 guide frame (corner brackets via CSS pseudo + helper div) -->
-    <div id="guide-frame">
-      <div class="guide-br"></div>
+<div id="app-container">
+    <div id="video-container">
+        <video id="videoElement" autoplay playsinline></video>
+        <canvas id="debugCanvas"></canvas>
+        
+        <div id="doc-frame">
+            <div class="bracket br-tl"></div>
+            <div class="bracket br-tr"></div>
+            <div class="bracket br-bl"></div>
+            <div class="bracket br-br"></div>
+        </div>
     </div>
+</div>
 
-    <!-- Stability progress bar -->
-    <div id="stability-bar-wrap">
-      <div id="stability-label">Hold Steady</div>
-      <div id="stability-bar-bg">
-        <div id="stability-bar"></div>
-      </div>
-    </div>
-
-    <!-- Score Banner (post-grade) -->
-    <div id="score-banner">
-      <div id="score-value">—</div>
-      <div id="score-label">Score / 25</div>
-    </div>
-  </div>
-
-  <!-- Controls Bar -->
-  <div id="controls">
-    <button id="btn-camera" class="btn btn-primary" disabled>Start Camera</button>
-    <button id="btn-manual" class="btn btn-ghost"   disabled>Capture Now</button>
-    <button id="btn-reset"  class="btn btn-ghost"   style="display:none">Scan Next Sheet</button>
-    <div id="debug-info">Corners: 0 / 4</div>
-  </div>
-
-</div><!-- /#app -->
+<div id="output-container">
+    <div id="score-banner">Score: - / 25</div>
+    <canvas id="outputCanvas"></canvas>
+    <button class="btn" id="btn-next" onclick="resetScanner()">Scan Next Sheet</button>
+</div>
 
 <script>
-// ═══════════════════════════════════════════════════════════════════════════════
-//  OMR GRADING SYSTEM — index.html
-//
-//  Architecture:
-//    1. OpenCV.js loads async; camera button unlocks when ready.
-//    2. requestAnimationFrame loop grabs video frames, runs detection.
-//    3. Corner detection → perspective warp → sync mark scan → bubble read.
-//    4. 4 stable frames triggers auto-capture + grade.
-//    5. Results rendered on canvas with colour-coded feedback.
-// ═══════════════════════════════════════════════════════════════════════════════
+    // HARDCODED ANSWER KEY: 25 Questions (0=A, 1=B, 2=C, 3=D)
+    const ANSWER_KEY = [
+        0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, // Q1 - Q13
+        1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0     // Q14 - Q25
+    ];
 
-// ────────────────────────────────────────────────────────
-//  ANSWER KEY  (edit to match your intended correct answers)
-//  Index 0 = Question 1, Index 24 = Question 25
-//  Values: 0=A, 1=B, 2=C, 3=D
-// ────────────────────────────────────────────────────────
-const ANSWER_KEY = [
-  0, 1, 2, 3, 0,   // Q1–5
-  1, 2, 3, 0, 1,   // Q6–10
-  2, 3, 0,          // Q11–13
-  1, 2, 3, 0, 1,   // Q14–18
-  2, 3, 0, 1, 2, 3, 0  // Q19–25
-];
+    let video = document.getElementById('videoElement');
+    let debugCanvas = document.getElementById('debugCanvas');
+    let outputCanvas = document.getElementById('outputCanvas');
+    let ctxDebug = debugCanvas.getContext('2d');
+    
+    let isScanning = false;
+    let stream = null;
+    let cap = null;
+    let frameTimer = null;
+    
+    // Stability tracking
+    let stableFrames = 0;
+    let prevCorners = null;
 
-// ────────────────────────────────────────────────────────
-//  GRID LAYOUT CONSTANTS
-//  These percentages describe where bubbles are in the
-//  WARPED (perspective-corrected) image. They must match
-//  the omr_sheet.html layout. Adjust if you redesign the sheet.
-// ────────────────────────────────────────────────────────
-
-// X-centre positions for each bubble option (as fraction of warped width)
-// Column 1 (Q1–13): starts around 12% from left
-// Column 2 (Q14–25): starts around 58% from left
-// Layout per column: [q-num-label][A][B][C][D] spaced ~5% apart
-
-const COL1_X = [0.200, 0.255, 0.310, 0.365]; // A,B,C,D centres for col1
-const COL2_X = [0.650, 0.705, 0.760, 0.815]; // A,B,C,D centres for col2
-
-// Bubble radius to sample (as fraction of warped width)
-const BUBBLE_R_FRAC = 0.018; // ~1.8% of width
-
-// Fill threshold: fraction of bubble area that must be dark
-const FILL_THRESHOLD = 0.40;
-
-// ────────────────────────────────────────────────────────
-//  DOM REFERENCES
-// ────────────────────────────────────────────────────────
-const loadingScreen  = document.getElementById('loading-screen');
-const loadingMsg     = document.getElementById('loading-msg');
-const appShell       = document.getElementById('app');
-const video          = document.getElementById('video');
-const hiddenCanvas   = document.getElementById('hidden-canvas');
-const resultCanvas   = document.getElementById('result-canvas');
-const guideFrame     = document.getElementById('guide-frame');
-const statusBadge    = document.getElementById('status-badge');
-const stabilityBar   = document.getElementById('stability-bar');
-const stabilityLabel = document.getElementById('stability-label');
-const debugInfo      = document.getElementById('debug-info');
-const scoreBanner    = document.getElementById('score-banner');
-const scoreValue     = document.getElementById('score-value');
-const btnCamera      = document.getElementById('btn-camera');
-const btnManual      = document.getElementById('btn-manual');
-const btnReset       = document.getElementById('btn-reset');
-
-// ────────────────────────────────────────────────────────
-//  STATE
-// ────────────────────────────────────────────────────────
-let cv;                    // OpenCV namespace (set when ready)
-let stream = null;         // MediaStream
-let rafId  = null;         // requestAnimationFrame handle
-let stableCount = 0;       // how many consecutive frames corners were stable
-let lastCorners = null;    // previous frame's corners (for stability check)
-let captureEnabled = false;// auto-capture on/off
-let graded = false;        // have we already graded this sheet?
-
-const STABLE_FRAMES_NEEDED = 4;
-const CORNER_STABILITY_PX  = 12; // max pixel drift between frames
-
-// ════════════════════════════════════════════════════════
-//  OPENCV LOAD CALLBACKS
-// ════════════════════════════════════════════════════════
-function onOpenCvReady() {
-  // OpenCV uses cv['onRuntimeInitialized'] to signal WASM is truly ready
-  if (typeof window.cv !== 'undefined' && window.cv.Mat) {
-    cvIsReady();
-  } else {
-    window.cv = window.cv || {};
-    const origInit = window.cv['onRuntimeInitialized'];
-    window.cv['onRuntimeInitialized'] = () => {
-      if (origInit) origInit();
-      cvIsReady();
-    };
-    // Fallback poll
-    const poll = setInterval(() => {
-      if (window.cv && window.cv.Mat) { clearInterval(poll); cvIsReady(); }
-    }, 200);
-  }
-}
-
-function onOpenCvError() {
-  loadingMsg.textContent = 'Failed to load OpenCV.js — check network';
-  setStatus('error', 'CV Load Error');
-}
-
-function cvIsReady() {
-  cv = window.cv;
-  loadingScreen.style.display = 'none';
-  appShell.style.display = 'flex';
-  btnCamera.disabled = false;
-  setStatus('ready', 'Ready');
-  positionGuideFrame();
-}
-
-// ════════════════════════════════════════════════════════
-//  UTILITIES
-// ════════════════════════════════════════════════════════
-function setStatus(cls, text) {
-  statusBadge.className = 'status-badge ' + cls;  // reset
-  statusBadge.id = 'status-badge';
-  statusBadge.className += ' ' + cls;
-  statusBadge.textContent = text;
-  // re-apply id-based class
-  statusBadge.setAttribute('class', cls);
-  statusBadge.id = 'status-badge';
-}
-
-// ────────────────────────────────────────────────────────
-//  GUIDE FRAME SIZING
-//  Keep A4 ratio (√2 : 1 ≈ 1.4142 : 1) within viewport
-// ────────────────────────────────────────────────────────
-function positionGuideFrame() {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight - 90; // subtract topbar+controls height approx
-  const a4Ratio = 1.4142; // h/w
-  let gw, gh;
-  if (vw * a4Ratio <= vh) {
-    gw = vw * 0.82;
-    gh = gw * a4Ratio;
-  } else {
-    gh = vh * 0.88;
-    gw = gh / a4Ratio;
-  }
-  guideFrame.style.width  = gw + 'px';
-  guideFrame.style.height = gh + 'px';
-  guideFrame.style.top    = ((vh - gh) / 2 + 40) + 'px'; // +40 for topbar
-  guideFrame.style.left   = ((vw - gw) / 2) + 'px';
-}
-window.addEventListener('resize', positionGuideFrame);
-
-// ════════════════════════════════════════════════════════
-//  CAMERA SETUP
-// ════════════════════════════════════════════════════════
-btnCamera.addEventListener('click', async () => {
-  btnCamera.disabled = true;
-  setStatus('loading', 'Starting Camera…');
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
-      audio: false
-    });
-    video.srcObject = stream;
-    await video.play();
-    captureEnabled = true;
-    btnManual.disabled = false;
-    setStatus('ready', 'Scanning…');
-    startDetectionLoop();
-  } catch (err) {
-    console.error('Camera error:', err);
-    setStatus('error', 'Camera Denied');
-    btnCamera.disabled = false;
-  }
-});
-
-btnManual.addEventListener('click', () => {
-  if (!captureEnabled || graded) return;
-  processAndGrade();
-});
-
-btnReset.addEventListener('click', resetScanner);
-
-// ════════════════════════════════════════════════════════
-//  MAIN DETECTION LOOP
-// ════════════════════════════════════════════════════════
-function startDetectionLoop() {
-  if (rafId) cancelAnimationFrame(rafId);
-
-  function loop() {
-    if (!captureEnabled || graded) { rafId = null; return; }
-    try {
-      detectCorners();
-    } catch(e) {
-      console.warn('Detection error:', e);
-    }
-    rafId = requestAnimationFrame(loop);
-  }
-  rafId = requestAnimationFrame(loop);
-}
-
-// ────────────────────────────────────────────────────────
-//  CORNER DETECTION
-//  1. Grab frame → grayscale → blur → threshold
-//  2. Find contours → filter for square-ish shapes
-//  3. Identify the 4 corner-most candidates
-//  4. Check stability → auto-capture after STABLE_FRAMES_NEEDED
-// ────────────────────────────────────────────────────────
-function detectCorners() {
-  if (video.readyState < 2) return;
-
-  const W = video.videoWidth;
-  const H = video.videoHeight;
-  if (!W || !H) return;
-
-  hiddenCanvas.width  = W;
-  hiddenCanvas.height = H;
-  const ctx = hiddenCanvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, W, H);
-
-  let src = cv.imread(hiddenCanvas);
-  let gray = new cv.Mat();
-  let blur = new cv.Mat();
-  let thresh = new cv.Mat();
-  let contours = new cv.MatVector();
-  let hierarchy = new cv.Mat();
-
-  try {
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
-    // THRESH_BINARY_INV: black squares → white blobs
-    cv.threshold(blur, thresh, 80, 255, cv.THRESH_BINARY_INV);
-    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-    const candidates = [];
-    const minArea = (W * H) * 0.0003;  // ~0.03% of image
-    const maxArea = (W * H) * 0.025;   // ~2.5% of image
-
-    for (let i = 0; i < contours.size(); i++) {
-      const cnt = contours.get(i);
-      const area = cv.contourArea(cnt);
-      if (area < minArea || area > maxArea) { cnt.delete(); continue; }
-
-      const rect = cv.boundingRect(cnt);
-      const ar = rect.width / rect.height;
-      // Must be roughly square (0.6–1.7 ratio)
-      if (ar < 0.55 || ar > 1.75) { cnt.delete(); continue; }
-
-      // Solidity check: area vs bounding box area
-      const solidity = area / (rect.width * rect.height);
-      if (solidity < 0.55) { cnt.delete(); continue; }
-
-      candidates.push({
-        x: rect.x + rect.width  / 2,
-        y: rect.y + rect.height / 2,
-        w: rect.width,
-        h: rect.height,
-        // Store outer edges for perspective transform
-        x0: rect.x,
-        y0: rect.y,
-        x1: rect.x + rect.width,
-        y1: rect.y + rect.height,
-      });
-      cnt.delete();
+    // Wait for OpenCV Core
+    function onOpenCvReady() {
+        if (cv.getBuildInformation) {
+            startCamera();
+        } else {
+            cv['onRuntimeInitialized'] = () => { startCamera(); };
+        }
     }
 
-    // Pick the 4 corners: top-left, top-right, bottom-left, bottom-right
-    const corners = pickFourCorners(candidates, W, H);
-    debugInfo.textContent = `Corners: ${corners ? 4 : candidates.length > 4 ? '4+' : candidates.length} / 4`;
-
-    if (corners) {
-      guideFrame.classList.add('locked');
-      checkStability(corners);
-    } else {
-      guideFrame.classList.remove('locked');
-      stableCount = 0;
-      lastCorners = null;
-      updateStabilityBar(0);
+    async function startCamera() {
+        document.getElementById('loading-text').innerText = "Accessing Camera...";
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+                audio: false
+            });
+            video.srcObject = stream;
+            video.onloadedmetadata = () => {
+                video.play();
+                debugCanvas.width = video.videoWidth;
+                debugCanvas.height = video.videoHeight;
+                cap = new cv.VideoCapture(video);
+                document.getElementById('loading-overlay').style.display = 'none';
+                isScanning = true;
+                processVideo();
+            };
+        } catch (err) {
+            alert("Camera access denied or unavailable.");
+            console.error(err);
+        }
     }
 
-  } finally {
-    src.delete(); gray.delete(); blur.delete();
-    thresh.delete(); contours.delete(); hierarchy.delete();
-  }
-}
-
-// ────────────────────────────────────────────────────────
-//  PICK FOUR CORNERS from candidate list
-//  Uses sum/diff heuristic: TL=min(x+y), TR=max(x-y),
-//  BL=min(x-y), BR=max(x+y)
-// ────────────────────────────────────────────────────────
-function pickFourCorners(candidates, W, H) {
-  if (candidates.length < 4) return null;
-
-  // Sort by proximity to actual corners of image
-  const scored = candidates.map(c => ({
-    ...c,
-    tl: Math.hypot(c.x,     c.y),
-    tr: Math.hypot(W - c.x, c.y),
-    bl: Math.hypot(c.x,     H - c.y),
-    br: Math.hypot(W - c.x, H - c.y),
-  }));
-
-  // For each corner role, pick the closest candidate
-  const used = new Set();
-
-  function best(scoreFn) {
-    let best = null, bestScore = Infinity;
-    scored.forEach((c, i) => {
-      if (used.has(i)) return;
-      const s = scoreFn(c);
-      if (s < bestScore) { bestScore = s; best = { c, i }; }
-    });
-    if (!best) return null;
-    used.add(best.i);
-    return best.c;
-  }
-
-  const tl = best(c => c.tl);
-  const tr = best(c => c.tr);
-  const bl = best(c => c.bl);
-  const br = best(c => c.br);
-
-  if (!tl || !tr || !bl || !br) return null;
-
-  // Sanity: TL must be left of TR, BL must be left of BR
-  if (tl.x >= tr.x || bl.x >= br.x) return null;
-  if (tl.y >= bl.y || tr.y >= br.y) return null;
-
-  return { tl, tr, bl, br };
-}
-
-// ────────────────────────────────────────────────────────
-//  STABILITY CHECK
-// ────────────────────────────────────────────────────────
-function checkStability(corners) {
-  if (lastCorners) {
-    const drift = Math.max(
-      Math.hypot(corners.tl.x - lastCorners.tl.x, corners.tl.y - lastCorners.tl.y),
-      Math.hypot(corners.tr.x - lastCorners.tr.x, corners.tr.y - lastCorners.tr.y),
-      Math.hypot(corners.bl.x - lastCorners.bl.x, corners.bl.y - lastCorners.bl.y),
-      Math.hypot(corners.br.x - lastCorners.br.x, corners.br.y - lastCorners.br.y),
-    );
-    if (drift < CORNER_STABILITY_PX) {
-      stableCount++;
-    } else {
-      stableCount = 0;
+    function showToast(msg) {
+        let t = document.getElementById('toast');
+        t.innerText = msg;
+        t.style.display = 'block';
+        setTimeout(() => t.style.display = 'none', 3000);
     }
-  } else {
-    stableCount = 0;
-  }
 
-  lastCorners = corners;
-  const pct = Math.min(100, (stableCount / STABLE_FRAMES_NEEDED) * 100);
-  updateStabilityBar(pct);
+    function processVideo() {
+        if (!isScanning) return;
+        
+        let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+        let gray = new cv.Mat();
+        let blurred = new cv.Mat();
+        let thresh = new cv.Mat();
+        let contours = new cv.MatVector();
+        let hierarchy = new cv.Mat();
 
-  if (stableCount >= STABLE_FRAMES_NEEDED) {
-    setStatus('locked', 'Locked — Grading…');
-    processAndGrade();
-  }
-}
+        try {
+            cap.read(src);
+            
+            // Image Prep
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+            cv.threshold(blurred, thresh, 0, 255, cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
 
-function updateStabilityBar(pct) {
-  stabilityBar.style.width = pct + '%';
-  stabilityBar.classList.toggle('full', pct >= 100);
-  if (pct >= 100) {
-    stabilityLabel.textContent = 'Capturing!';
-  } else if (pct > 0) {
-    stabilityLabel.textContent = 'Hold Steady';
-  } else {
-    stabilityLabel.textContent = 'Find Document';
-  }
-}
+            // Find Contours
+            cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-// ════════════════════════════════════════════════════════
-//  PROCESS & GRADE
-// ════════════════════════════════════════════════════════
-function processAndGrade() {
-  if (graded) return;
-  graded = true;
-  captureEnabled = false;
-  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+            let candidates = [];
+            let minArea = (src.cols * src.rows) * 0.0005; 
 
-  const W = video.videoWidth;
-  const H = video.videoHeight;
-  hiddenCanvas.width  = W;
-  hiddenCanvas.height = H;
+            for (let i = 0; i < contours.size(); i++) {
+                let cnt = contours.get(i);
+                let area = cv.contourArea(cnt);
+                if (area < minArea) continue;
 
-  const ctx = hiddenCanvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, W, H);
+                let rect = cv.boundingRect(cnt);
+                let aspect = rect.width / rect.height;
+                let extent = area / (rect.width * rect.height);
 
-  // Stop camera to save resources
-  if (stream) stream.getTracks().forEach(t => t.stop());
-  video.style.display = 'none';
+                // Look for solid black squares (Anchor marks)
+                if (aspect > 0.5 && aspect < 2.0 && extent > 0.5) {
+                    candidates.push({
+                        x: rect.x, y: rect.y, w: rect.width, h: rect.height,
+                        cx: rect.x + rect.width / 2, cy: rect.y + rect.height / 2
+                    });
+                }
+            }
 
-  try {
-    const score = grade();
-    showResult(score);
-  } catch(err) {
-    console.error('Grading error:', err);
-    setStatus('error', 'Processing Failed');
-    // Show raw capture for debugging
-    resultCanvas.style.display = 'block';
-    resultCanvas.width  = W;
-    resultCanvas.height = H;
-    resultCanvas.getContext('2d').drawImage(hiddenCanvas, 0, 0);
-    showResetButton();
-  }
-}
+            ctxDebug.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
 
-// ════════════════════════════════════════════════════════
-//  GRADE FUNCTION — the core OMR logic
-//  Returns: { score, answers, warped }
-// ════════════════════════════════════════════════════════
-function grade() {
-  // ── Step 1: Read image from hidden canvas ──────────────
-  let src = cv.imread(hiddenCanvas);
-  let gray = new cv.Mat();
-  let blur = new cv.Mat();
-  let thresh = new cv.Mat();
-  let contours = new cv.MatVector();
-  let hierarchy = new cv.Mat();
+            // Find 4 outermost squares
+            if (candidates.length >= 4) {
+                let bestTL = null, bestTR = null, bestBL = null, bestBR = null;
+                let minTL = Infinity, maxTR = -Infinity, minBL = Infinity, maxBR = -Infinity;
 
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
-  cv.threshold(blur, thresh, 80, 255, cv.THRESH_BINARY_INV);
-  cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                candidates.forEach(c => {
+                    let sum = c.cx + c.cy;
+                    let diff = c.cx - c.cy;
 
-  // ── Step 2: Find corner anchors ────────────────────────
-  const W = src.cols;
-  const H = src.rows;
-  const candidates = [];
-  const minArea = (W * H) * 0.0003;
-  const maxArea = (W * H) * 0.025;
+                    if (sum < minTL) { minTL = sum; bestTL = c; }
+                    if (diff > maxTR) { maxTR = diff; bestTR = c; }
+                    if (diff < minBL) { minBL = diff; bestBL = c; }
+                    if (sum > maxBR) { maxBR = sum; bestBR = c; }
+                });
 
-  for (let i = 0; i < contours.size(); i++) {
-    const cnt = contours.get(i);
-    const area = cv.contourArea(cnt);
-    if (area < minArea || area > maxArea) { cnt.delete(); continue; }
-    const rect = cv.boundingRect(cnt);
-    const ar = rect.width / rect.height;
-    if (ar < 0.55 || ar > 1.75) { cnt.delete(); continue; }
-    const solidity = area / (rect.width * rect.height);
-    if (solidity < 0.55) { cnt.delete(); continue; }
-    candidates.push({
-      x: rect.x + rect.width / 2,
-      y: rect.y + rect.height / 2,
-      x0: rect.x, y0: rect.y,
-      x1: rect.x + rect.width, y1: rect.y + rect.height,
-    });
-    cnt.delete();
-  }
+                // Ensure unique corners
+                let uniqueCorners = new Set([bestTL, bestTR, bestBL, bestBR]);
+                if (uniqueCorners.size === 4) {
+                    
+                    // *** CRITICAL FIX: Get OUTERMOST edges for perspective warp ***
+                    let corners = [
+                        { x: bestTL.x, y: bestTL.y },                                      // TL
+                        { x: bestTR.x + bestTR.w, y: bestTR.y },                           // TR
+                        { x: bestBR.x + bestBR.w, y: bestBR.y + bestBR.h },                // BR
+                        { x: bestBL.x, y: bestBL.y + bestBL.h }                            // BL
+                    ];
 
-  contours.delete(); hierarchy.delete();
+                    // Draw guide polygon
+                    ctxDebug.strokeStyle = stableFrames > 2 ? '#22c55e' : '#eab308';
+                    ctxDebug.lineWidth = 4;
+                    ctxDebug.beginPath();
+                    ctxDebug.moveTo(corners[0].x, corners[0].y);
+                    ctxDebug.lineTo(corners[1].x, corners[1].y);
+                    ctxDebug.lineTo(corners[2].x, corners[2].y);
+                    ctxDebug.lineTo(corners[3].x, corners[3].y);
+                    ctxDebug.closePath();
+                    ctxDebug.stroke();
 
-  const corners = pickFourCorners(candidates, W, H);
-  if (!corners) throw new Error('Could not find 4 corner anchors');
+                    // Check stability
+                    if (prevCorners) {
+                        let maxDist = 0;
+                        for(let i=0; i<4; i++){
+                            let dx = corners[i].x - prevCorners[i].x;
+                            let dy = corners[i].y - prevCorners[i].y;
+                            maxDist = Math.max(maxDist, Math.sqrt(dx*dx + dy*dy));
+                        }
+                        if (maxDist < 20) stableFrames++;
+                        else stableFrames = 0;
+                    } else {
+                        stableFrames = 1;
+                    }
+                    
+                    prevCorners = corners;
 
-  // ── Step 3: Perspective Transform ─────────────────────
-  // Use OUTERMOST edges of each anchor square → preserves sync marks
-  const srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
-    corners.tl.x0, corners.tl.y0,   // TL: outer top-left corner of anchor
-    corners.tr.x1, corners.tr.y0,   // TR: outer top-right corner of anchor
-    corners.br.x1, corners.br.y1,   // BR: outer bottom-right corner of anchor
-    corners.bl.x0, corners.bl.y1,   // BL: outer bottom-left corner of anchor
-  ]);
-
-  // Output: A4 proportions at a fixed resolution
-  const OUT_W = 900;
-  const OUT_H = Math.round(OUT_W * 1.4142);
-
-  const dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
-    0,     0,
-    OUT_W, 0,
-    OUT_W, OUT_H,
-    0,     OUT_H,
-  ]);
-
-  const M = cv.getPerspectiveTransform(srcPts, dstPts);
-  let warped = new cv.Mat();
-  cv.warpPerspective(src, warped, M, new cv.Size(OUT_W, OUT_H));
-
-  srcPts.delete(); dstPts.delete(); M.delete();
-  src.delete(); gray.delete(); blur.delete(); thresh.delete();
-
-  // ── Step 4: Prepare warped grayscale for bubble reading ──
-  let warpedGray  = new cv.Mat();
-  let warpedBlur  = new cv.Mat();
-  let warpedThresh = new cv.Mat();
-
-  cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
-  cv.GaussianBlur(warpedGray, warpedBlur, new cv.Size(3, 3), 0);
-  cv.threshold(warpedBlur, warpedThresh, 0, 255,
-               cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
-
-  // ── Step 5: Find 13 Left Sync Marks ───────────────────
-  // Scan left strip (x < 12%) of the warped image for black rectangles
-  const SYNC_X_MAX = Math.round(OUT_W * 0.12);
-  let syncContours  = new cv.MatVector();
-  let syncHierarchy = new cv.Mat();
-
-  // Crop left strip
-  const leftROI = warpedThresh.roi(new cv.Rect(0, 0, SYNC_X_MAX, OUT_H));
-  cv.findContours(leftROI, syncContours, syncHierarchy,
-                  cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-  const syncYs = [];
-  const syncMinArea = (SYNC_X_MAX * OUT_H) * 0.001;
-  const syncMaxArea = (SYNC_X_MAX * OUT_H) * 0.06;
-
-  for (let i = 0; i < syncContours.size(); i++) {
-    const cnt = syncContours.get(i);
-    const area = cv.contourArea(cnt);
-    if (area < syncMinArea || area > syncMaxArea) { cnt.delete(); continue; }
-    const rect = cv.boundingRect(cnt);
-    // Sync marks are wider than tall (rectangular, not square)
-    if (rect.width < rect.height * 0.5) { cnt.delete(); continue; }
-    syncYs.push(rect.y + rect.height / 2);
-    cnt.delete();
-  }
-
-  leftROI.delete(); syncContours.delete(); syncHierarchy.delete();
-
-  // Sort by Y and deduplicate (marks within 15px of each other → keep one)
-  syncYs.sort((a, b) => a - b);
-  const uniqueSyncYs = [];
-  for (let i = 0; i < syncYs.length; i++) {
-    if (uniqueSyncYs.length === 0 ||
-        syncYs[i] - uniqueSyncYs[uniqueSyncYs.length - 1] > 15) {
-      uniqueSyncYs.push(syncYs[i]);
+                    // Trigger Capture!
+                    if (stableFrames >= 4) {
+                        isScanning = false;
+                        gradeSheet(src, corners);
+                    }
+                } else {
+                    stableFrames = 0;
+                }
+            } else {
+                stableFrames = 0;
+            }
+        } catch (err) {
+            console.error("Frame process error:", err);
+        } finally {
+            src.delete(); gray.delete(); blurred.delete(); thresh.delete();
+            contours.delete(); hierarchy.delete();
+            
+            if (isScanning) {
+                frameTimer = requestAnimationFrame(processVideo);
+            }
+        }
     }
-  }
 
-  console.log(`Found ${uniqueSyncYs.length} sync marks:`, uniqueSyncYs);
+    function gradeSheet(originalSrc, corners) {
+        document.getElementById('loading-overlay').style.display = 'flex';
+        document.getElementById('loading-text').innerText = "Grading...";
 
-  // ── Step 6: Build question grid ───────────────────────
-  // We have up to 13 sync mark Y-coords = row centres for Q1–13.
-  // Q14–25 share the same Y rows (col2 has only 12 rows).
-  // If sync marks are missing, fall back to evenly-spaced grid.
+        setTimeout(() => {
+            let warped = new cv.Mat();
+            let M = new cv.Mat();
+            let warpedGray = new cv.Mat();
+            let warpedThresh = new cv.Mat();
+            
+            try {
+                // Target Dimensions (800w x 1131h represents A4 ratio 1:1.414)
+                let w = 800, h = 1131;
+                
+                let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                    corners[0].x, corners[0].y, // TL
+                    corners[1].x, corners[1].y, // TR
+                    corners[2].x, corners[2].y, // BR
+                    corners[3].x, corners[3].y  // BL
+                ]);
+                let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                    0, 0,    w, 0, 
+                    w, h,    0, h
+                ]);
 
-  let rowYs;
-  if (uniqueSyncYs.length >= 10) {
-    rowYs = uniqueSyncYs.slice(0, 13);
-  } else {
-    // Fallback: equally space 13 rows between 5% and 95%
-    console.warn('Sync marks not found; using fallback grid');
-    rowYs = Array.from({ length: 13 }, (_, i) =>
-      OUT_H * (0.05 + (0.90 / 12) * i)
-    );
-  }
+                M = cv.getPerspectiveTransform(srcTri, dstTri);
+                cv.warpPerspective(originalSrc, warped, M, new cv.Size(w, h));
 
-  // Ensure exactly 13 entries (pad if short)
-  while (rowYs.length < 13) {
-    const last = rowYs[rowYs.length - 1];
-    const gap  = rowYs.length > 1 ? last - rowYs[rowYs.length - 2] : OUT_H / 14;
-    rowYs.push(last + gap);
-  }
+                cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
+                cv.threshold(warpedGray, warpedThresh, 0, 255, cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
 
-  // ── Step 7: Read all 25 question bubbles ──────────────
-  // Column 1: Q1–13 → rows 0–12, x positions COL1_X
-  // Column 2: Q14–25 → rows 0–11, x positions COL2_X
-  const bubbleRadius = Math.round(OUT_W * BUBBLE_R_FRAC);
-  const answers = []; // answered option index per question (0–3 or -1 = none, 4 = multiple)
+                // FIND SYNC MARKS (Left 12% of image)
+                let roiRect = new cv.Rect(0, 0, Math.floor(w * 0.12), h);
+                let roi = warpedThresh.roi(roiRect);
+                let syncContours = new cv.MatVector();
+                let syncHierarchy = new cv.Mat();
+                cv.findContours(roi, syncContours, syncHierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-  function readBubble(cx, cy) {
-    // Clamp to image bounds
-    const x0 = Math.max(0, cx - bubbleRadius);
-    const y0 = Math.max(0, cy - bubbleRadius);
-    const x1 = Math.min(OUT_W - 1, cx + bubbleRadius);
-    const y1 = Math.min(OUT_H - 1, cy + bubbleRadius);
-    const roi = warpedThresh.roi(new cv.Rect(x0, y0, x1 - x0, y1 - y0));
-    const total = roi.rows * roi.cols;
-    const black = cv.countNonZero(roi);
-    roi.delete();
-    return total > 0 ? black / total : 0;
-  }
+                let syncMarksY = [];
+                for (let i = 0; i < syncContours.size(); i++) {
+                    let rect = cv.boundingRect(syncContours.get(i));
+                    let area = cv.contourArea(syncContours.get(i));
+                    let aspect = rect.width / rect.height;
+                    
+                    // Sync mark is a wide rectangle
+                    if (area > 100 && aspect > 1.2 && aspect < 6.0) {
+                        syncMarksY.push(rect.y + rect.height / 2);
+                    }
+                }
 
-  // Q1–13
-  for (let q = 0; q < 13; q++) {
-    const cy = Math.round(rowYs[q]);
-    const fills = COL1_X.map(xFrac => {
-      const cx = Math.round(OUT_W * xFrac);
-      return readBubble(cx, cy);
-    });
-    const filled = fills.map((f, i) => f > FILL_THRESHOLD ? i : -1).filter(i => i >= 0);
-    if (filled.length === 0)      answers.push(-1); // blank
-    else if (filled.length === 1) answers.push(filled[0]);
-    else                           answers.push(4);  // multiple
-  }
+                syncMarksY.sort((a, b) => a - b);
 
-  // Q14–25 (12 questions, rows 0–11)
-  for (let q = 0; q < 12; q++) {
-    const cy = Math.round(rowYs[q]);
-    const fills = COL2_X.map(xFrac => {
-      const cx = Math.round(OUT_W * xFrac);
-      return readBubble(cx, cy);
-    });
-    const filled = fills.map((f, i) => f > FILL_THRESHOLD ? i : -1).filter(i => i >= 0);
-    if (filled.length === 0)      answers.push(-1);
-    else if (filled.length === 1) answers.push(filled[0]);
-    else                           answers.push(4);
-  }
+                // Remove duplicates (marks too close to each other)
+                let filteredY = [];
+                for (let i = 0; i < syncMarksY.length; i++) {
+                    if (filteredY.length === 0 || (syncMarksY[i] - filteredY[filteredY.length - 1] > 20)) {
+                        filteredY.push(syncMarksY[i]);
+                    }
+                }
 
-  warpedGray.delete(); warpedBlur.delete(); warpedThresh.delete();
+                if (filteredY.length !== 13) {
+                    showToast(`Error: Found ${filteredY.length} sync marks instead of 13. Please try again.`);
+                    resetScanner();
+                    return;
+                }
 
-  // ── Step 8: Score ──────────────────────────────────────
-  let score = 0;
-  for (let i = 0; i < 25; i++) {
-    if (answers[i] === ANSWER_KEY[i]) score++;
-  }
+                // GRADE BUBBLES
+                let score = 0;
+                let R = Math.round(w * 0.02); // Radius based on 2% of width
+                let BUBBLE_AREA = Math.PI * R * R;
+                
+                // Color Constants (OpenCV uses RGBA)
+                const COLOR_GREEN = [34, 197, 94, 255];
+                const COLOR_RED = [239, 68, 68, 255];
+                const COLOR_BLUE = [59, 130, 246, 255];
 
-  // ── Step 9: Draw feedback on warped colour image ───────
-  drawFeedback(warped, rowYs, answers, OUT_W, OUT_H, bubbleRadius);
+                for (let q = 0; q < 25; q++) {
+                    let isCol1 = q < 13;
+                    let rowIndex = isCol1 ? q : (q - 13);
+                    let cy = filteredY[rowIndex];
 
-  // ── Step 10: Render warped to result canvas ────────────
-  resultCanvas.width  = OUT_W;
-  resultCanvas.height = OUT_H;
-  cv.imshow(resultCanvas, warped);
-  warped.delete();
+                    // X Percentages match omr_sheet.html exactly
+                    let basePct = isCol1 ? 0.25 : 0.65;
+                    let stepPct = 0.07;
+                    
+                    let filledOptions = [];
+                    
+                    for (let opt = 0; opt < 4; opt++) {
+                        let cx = Math.round(w * (basePct + opt * stepPct));
+                        
+                        // Mask extraction
+                        let bRect = new cv.Rect(cx - R, cy - R, R * 2, R * 2);
+                        // Prevent out of bounds
+                        if (bRect.x < 0 || bRect.y < 0 || bRect.x + bRect.width > w || bRect.y + bRect.height > h) continue;
 
-  return { score, answers };
-}
+                        let bubbleRoi = warpedThresh.roi(bRect);
+                        let nonZero = cv.countNonZero(bubbleRoi);
+                        bubbleRoi.delete();
+                        
+                        // Density check > 40%
+                        if (nonZero / BUBBLE_AREA > 0.40) {
+                            filledOptions.push(opt);
+                        }
+                    }
 
-// ════════════════════════════════════════════════════════
-//  DRAW FEEDBACK OVERLAYS
-// ════════════════════════════════════════════════════════
-function drawFeedback(mat, rowYs, answers, W, H, bR) {
-  const THICK = Math.max(3, Math.round(bR * 0.7));
-  const THIN  = Math.max(2, Math.round(bR * 0.45));
+                    let expected = ANSWER_KEY[q];
 
-  // Helper: draw ring on cv.Mat
-  function ring(cx, cy, r, color, thickness) {
-    cv.circle(mat,
-      new cv.Point(Math.round(cx), Math.round(cy)),
-      Math.round(r * 1.25),
-      color, thickness);
-  }
+                    if (filledOptions.length === 1 && filledOptions[0] === expected) {
+                        // Correct!
+                        score++;
+                        let cx = Math.round(w * (basePct + expected * stepPct));
+                        cv.circle(warped, new cv.Point(cx, cy), R + 4, COLOR_GREEN, 4);
+                    } else {
+                        // Incorrect or Multiple
+                        filledOptions.forEach(fOpt => {
+                            let cx = Math.round(w * (basePct + fOpt * stepPct));
+                            cv.circle(warped, new cv.Point(cx, cy), R + 4, COLOR_RED, 4);
+                        });
+                        // Show correct answer missed
+                        let correctCx = Math.round(w * (basePct + expected * stepPct));
+                        cv.circle(warped, new cv.Point(correctCx, cy), R + 4, COLOR_BLUE, 2);
+                    }
+                }
 
-  const GREEN = new cv.Scalar(50,  220, 100, 255);
-  const RED   = new cv.Scalar(240, 60,  80,  255);
-  const BLUE  = new cv.Scalar(70,  160, 255, 255);
+                // Show Results
+                cv.imshow('outputCanvas', warped);
+                
+                document.getElementById('video-container').style.display = 'none';
+                document.getElementById('output-container').style.display = 'flex';
+                
+                let sb = document.getElementById('score-banner');
+                sb.innerText = `Score: ${score} / 25`;
+                sb.style.display = 'block';
 
-  // Q1–13
-  for (let q = 0; q < 13; q++) {
-    const cy      = rowYs[q];
-    const correct = ANSWER_KEY[q];
-    const given   = answers[q];
-
-    COL1_X.forEach((xFrac, opt) => {
-      const cx = W * xFrac;
-      if (opt === given && given === correct) {
-        ring(cx, cy, bR, GREEN, THICK);   // correct fill → green
-      } else if (opt === given && given !== correct && given !== 4) {
-        ring(cx, cy, bR, RED, THICK);     // wrong fill → red
-      } else if (opt === correct && given !== correct) {
-        ring(cx, cy, bR, BLUE, THIN);     // missed correct → blue hint
-      }
-    });
-
-    // If multiple filled → red on all filled
-    if (given === 4) {
-      COL1_X.forEach((xFrac) => {
-        ring(W * xFrac, cy, bR, RED, THICK);
-      });
+                roi.delete(); syncContours.delete(); syncHierarchy.delete();
+            } catch (err) {
+                console.error("Grading failed:", err);
+                showToast("Grading failed due to image distortion.");
+                resetScanner();
+            } finally {
+                warped.delete(); M.delete(); warpedGray.delete(); warpedThresh.delete(); srcTri.delete(); dstTri.delete();
+                document.getElementById('loading-overlay').style.display = 'none';
+            }
+        }, 100);
     }
-  }
 
-  // Q14–25 (answers[13]…answers[24])
-  for (let q = 0; q < 12; q++) {
-    const cy      = rowYs[q];
-    const correct = ANSWER_KEY[13 + q];
-    const given   = answers[13 + q];
-
-    COL2_X.forEach((xFrac, opt) => {
-      const cx = W * xFrac;
-      if (opt === given && given === correct) {
-        ring(cx, cy, bR, GREEN, THICK);
-      } else if (opt === given && given !== correct && given !== 4) {
-        ring(cx, cy, bR, RED, THICK);
-      } else if (opt === correct && given !== correct) {
-        ring(cx, cy, bR, BLUE, THIN);
-      }
-    });
-
-    if (given === 4) {
-      COL2_X.forEach((xFrac) => {
-        ring(W * xFrac, cy, bR, RED, THICK);
-      });
+    function resetScanner() {
+        document.getElementById('output-container').style.display = 'none';
+        document.getElementById('score-banner').style.display = 'none';
+        document.getElementById('video-container').style.display = 'flex';
+        
+        ctxDebug.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+        
+        stableFrames = 0;
+        prevCorners = null;
+        isScanning = true;
+        
+        // Restart loop seamlessly
+        processVideo();
     }
-  }
-}
-
-// ════════════════════════════════════════════════════════
-//  SHOW RESULT UI
-// ════════════════════════════════════════════════════════
-function showResult({ score }) {
-  // Show result canvas, hide video
-  resultCanvas.style.display = 'block';
-  guideFrame.style.display = 'none';
-  document.getElementById('stability-bar-wrap').style.display = 'none';
-
-  // Score banner
-  scoreValue.textContent = `${score} / 25`;
-  scoreBanner.style.display = 'block';
-
-  const pct = (score / 25) * 100;
-  scoreValue.style.color =
-    pct >= 80 ? 'var(--green)' :
-    pct >= 50 ? 'var(--amber)' :
-    'var(--red)';
-
-  setStatus('graded', `Score: ${score}/25`);
-  showResetButton();
-}
-
-function showResetButton() {
-  btnManual.style.display = 'none';
-  btnReset.style.display  = 'inline-block';
-}
-
-// ════════════════════════════════════════════════════════
-//  RESET SCANNER
-// ════════════════════════════════════════════════════════
-function resetScanner() {
-  // Reset state
-  graded = false;
-  captureEnabled = false;
-  stableCount = 0;
-  lastCorners = null;
-  stream = null;
-
-  // Reset UI
-  resultCanvas.style.display  = 'none';
-  video.style.display         = 'block';
-  guideFrame.style.display    = 'block';
-  guideFrame.classList.remove('locked');
-  document.getElementById('stability-bar-wrap').style.display = 'block';
-  scoreBanner.style.display   = 'none';
-  btnReset.style.display      = 'none';
-  btnManual.style.display     = 'inline-block';
-  btnManual.disabled          = true;
-  btnCamera.disabled          = false;
-
-  updateStabilityBar(0);
-  setStatus('ready', 'Ready');
-  debugInfo.textContent = 'Corners: 0 / 4';
-  positionGuideFrame();
-}
-
 </script>
 </body>
 </html>
