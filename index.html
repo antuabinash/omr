@@ -193,6 +193,58 @@
                     let warped = new cv.Mat();
                     cv.warpPerspective(src, warped, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
 
+                    // --- MILESTONE 6: DETECT AND GRADE BUBBLES ---
+                    let warpedGray = new cv.Mat();
+                    cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
+                    
+                    let warpedThresh = new cv.Mat();
+                    // Convert to pure black & white. Dark pencil marks become white pixels for easier counting.
+                    cv.threshold(warpedGray, warpedThresh, 150, 255, cv.THRESH_BINARY_INV);
+                    
+                    let bubbleContours = new cv.MatVector();
+                    let bubbleHierarchy = new cv.Mat();
+                    cv.findContours(warpedThresh, bubbleContours, bubbleHierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+                    let bubblesFound = 0;
+                    
+                    for (let j = 0; j < bubbleContours.size(); ++j) {
+                        let bCnt = bubbleContours.get(j);
+                        let bRect = cv.boundingRect(bCnt);
+                        let aspectRatio = bRect.width / bRect.height;
+                        let area = cv.contourArea(bCnt);
+                        
+                        // Filter: Is it a circle? (Aspect ratio ~1.0) and is it bubble-sized?
+                        if (aspectRatio >= 0.8 && aspectRatio <= 1.2 && area > 80 && area < 2000) {
+                            bubblesFound++;
+                            
+                            // Check the density of white pixels inside this bubble's box
+                            let roi = warpedThresh.roi(bRect);
+                            let totalPixels = bRect.width * bRect.height;
+                            let fillRatio = cv.countNonZero(roi) / totalPixels;
+                            
+                            let center = new cv.Point(bRect.x + bRect.width / 2, bRect.y + bRect.height / 2);
+                            let radius = bRect.width / 2;
+
+                            // A perfectly shaded circle has a ratio of ~0.78. >0.45 means it's colored in!
+                            if (fillRatio > 0.45) {
+                                // FILLED BUBBLE -> Draw thick GREEN circle
+                                cv.circle(warped, center, radius, [0, 255, 0, 255], 4); 
+                            } else {
+                                // EMPTY BUBBLE -> Draw thin RED circle
+                                cv.circle(warped, center, radius, [255, 0, 0, 255], 2);
+                            }
+                            
+                            roi.delete(); // Free memory for this check
+                        }
+                    }
+                    
+                    console.log(`Found ${bubblesFound} total bubbles on the sheet!`);
+                    
+                    // Clean up bubble detection memory
+                    warpedGray.delete(); warpedThresh.delete(); 
+                    bubbleContours.delete(); bubbleHierarchy.delete();
+                    // ---------------------------------------------
+
                     // Resize the canvas to match our new flattened image
                     canvasElement.width = maxWidth;
                     canvasElement.height = maxHeight;
