@@ -36,6 +36,7 @@
 
         canvas { display: none; width: 100%; border: 3px solid #28a745; border-radius: 8px; margin-top: 15px; }
         #scoreDisplay { display: none; background: #28a745; color: white; font-size: 24px; padding: 15px; border-radius: 8px; margin-top: 15px; font-weight: bold; }
+        #resetBtn { display: none; background-color: #007bff; margin-top: 15px; }
     </style>
     <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
 </head>
@@ -62,6 +63,7 @@
         
         <canvas id="canvasOutput"></canvas>
         <div id="scoreDisplay">Score: -- / 25</div>
+        <button id="resetBtn">Scan Next Sheet</button>
     </div>
 
     <script>
@@ -74,6 +76,7 @@
         const scanStatus = document.getElementById('scanStatus');
         const scoreDisplay = document.getElementById('scoreDisplay');
         const vidContainer = document.getElementById('vidContainer');
+        const resetBtn = document.getElementById('resetBtn');
         
         let autoScanInterval;
         let stableFrames = 0;
@@ -221,39 +224,82 @@
                                 }
                             }
 
-                            // --- 3. PROJECT THE VIRTUAL GRID ---
+                            // --- 3. PROJECT THE VIRTUAL GRID & GRADE WITH ANSWER KEY ---
                             if (uniqueMarks.length === 13) {
-                                let filledBubbles = 0;
+                                
+                                // NEW: The Answer Key! (0=A, 1=B, 2=C, 3=D)
+                                // Change these numbers to set the real answers for your quiz!
+                                const ANSWER_KEY = [
+                                    0, 1, 2, 3, 0, // Q1-5:   A, B, C, D, A
+                                    1, 2, 3, 0, 1, // Q6-10:  B, C, D, A, B
+                                    2, 3, 0, 1, 2, // Q11-15: C, D, A, B, C
+                                    3, 0, 1, 2, 3, // Q16-20: D, A, B, C, D
+                                    0, 1, 2, 3, 0  // Q21-25: A, B, C, D, A
+                                ];
+
+                                let correctAnswers = 0;
+                                
                                 // These match the exact CSS percentages from our omr_sheet_evalbee.html!
                                 let col1X = [0.20, 0.28, 0.36, 0.44];
                                 let col2X = [0.66, 0.74, 0.82, 0.90];
                                 let radius = maxWidth * 0.015;
 
-                                // Reusable function to grade a specific bubble
-                                let checkBubble = function(x, y, r) {
+                                // Reusable function to just check if a bubble is filled (returns true/false)
+                                let isBubbleFilled = function(x, y, r) {
                                     let box = new cv.Rect(x - r, y - r, r * 2, r * 2);
-                                    if(box.x < 0 || box.y < 0 || box.x + box.width > maxWidth || box.y + box.height > maxHeight) return;
+                                    if(box.x < 0 || box.y < 0 || box.x + box.width > maxWidth || box.y + box.height > maxHeight) return false;
                                     
                                     let roi = warpedThresh.roi(box);
                                     let fillRatio = cv.countNonZero(roi) / (box.width * box.height);
-                                    let center = new cv.Point(x, y);
-
-                                    if (fillRatio > 0.40) {
-                                        filledBubbles++;
-                                        cv.circle(warped, center, Math.round(r), [0, 255, 0, 255], 4); 
-                                    } else {
-                                        cv.circle(warped, center, Math.round(r), [255, 0, 0, 255], 2);
-                                    }
                                     roi.delete();
+                                    return fillRatio > 0.40;
                                 };
 
-                                for(let i=0; i<13; i++) {
-                                    let rowY = uniqueMarks[i].y;
-                                    // Grade Col 1
-                                    col1X.forEach((xPct) => { checkBubble(maxWidth * xPct, rowY, radius); });
-                                    // Grade Col 2 (Only 12 questions)
-                                    if (i < 12) {
-                                        col2X.forEach((xPct) => { checkBubble(maxWidth * xPct, rowY, radius); });
+                                // Loop through all 25 questions
+                                for (let q = 0; q < 25; q++) {
+                                    let isCol1 = (q < 13);
+                                    let rowIdx = isCol1 ? q : (q - 13);
+                                    let rowY = uniqueMarks[rowIdx].y;
+                                    let xPcts = isCol1 ? col1X : col2X;
+                                    
+                                    let expectedAns = ANSWER_KEY[q];
+                                    let filledOptions = [];
+                                    
+                                    // 1. Check which options the student filled
+                                    for (let opt = 0; opt < 4; opt++) {
+                                        let x = maxWidth * xPcts[opt];
+                                        if (isBubbleFilled(x, rowY, radius)) {
+                                            filledOptions.push(opt);
+                                        }
+                                    }
+                                    
+                                    // 2. Evaluate (Must have exactly ONE bubble filled, and it must match the key)
+                                    let isCorrect = (filledOptions.length === 1 && filledOptions[0] === expectedAns);
+                                    if (isCorrect) correctAnswers++;
+
+                                    // 3. Draw visual feedback
+                                    for (let opt = 0; opt < 4; opt++) {
+                                        let x = maxWidth * xPcts[opt];
+                                        let center = new cv.Point(x, rowY);
+                                        let filled = filledOptions.includes(opt);
+                                        
+                                        if (filled) {
+                                            if (isCorrect) {
+                                                // Correct answer! -> Thick Green Circle
+                                                cv.circle(warped, center, Math.round(radius), [0, 255, 0, 255], 4); 
+                                            } else {
+                                                // Wrong answer / Multiple filled -> Thick Red Circle
+                                                cv.circle(warped, center, Math.round(radius), [255, 0, 0, 255], 4);
+                                            }
+                                        } else {
+                                            if (opt === expectedAns) {
+                                                // Missed the correct answer -> Thick Blue Circle (Shows what they should have picked)
+                                                cv.circle(warped, center, Math.round(radius), [0, 150, 255, 255], 3);
+                                            } else {
+                                                // Unfilled & incorrect option -> Thin Gray Circle
+                                                cv.circle(warped, center, Math.round(radius), [200, 200, 200, 255], 2);
+                                            }
+                                        }
                                     }
                                 }
                                 
@@ -266,7 +312,8 @@
                                 vidContainer.style.display = "none";
                                 scanStatus.innerText = "Scan Complete!";
                                 scoreDisplay.style.display = "block";
-                                scoreDisplay.innerText = `Mark: ${filledBubbles} / 25`; 
+                                scoreDisplay.innerText = `Score: ${correctAnswers} / 25`; 
+                                resetBtn.style.display = "block"; // Show the reset button
 
                             } else {
                                 // If we didn't find all 13 marks, fail silently and resume scanning loop
@@ -301,6 +348,22 @@
                 console.error("OpenCV Processing Error:", err);
             }
         }
+
+        // NEW: Scan Another Sheet Logic
+        resetBtn.addEventListener('click', () => {
+            canvasElement.style.display = "none";
+            scoreDisplay.style.display = "none";
+            resetBtn.style.display = "none";
+            vidContainer.style.display = "block";
+            
+            stableFrames = 0;
+            lastCenters = [];
+            scanStatus.style.backgroundColor = "#007bff";
+            scanStatus.innerText = "Fit the OMR sheet inside the frame...";
+            
+            // Restart the scanning loop
+            autoScanInterval = setInterval(attemptAutoCapture, 500);
+        });
     </script>
 </body>
 </html>
