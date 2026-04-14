@@ -140,7 +140,11 @@
                     let cnt = contours.get(i);
                     let area = cv.contourArea(cnt);
 
-                    if (area > 300 && area < 10000) { 
+                    // Add Aspect Ratio check to make sure the marker is actually a SQUARE
+                    let bRect = cv.boundingRect(cnt);
+                    let markerAspectRatio = bRect.width / bRect.height;
+
+                    if (area > 300 && area < 10000 && markerAspectRatio >= 0.7 && markerAspectRatio <= 1.3) { 
                         let perimeter = cv.arcLength(cnt, true);
                         let approx = new cv.Mat();
                         cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
@@ -213,8 +217,16 @@
                         let aspectRatio = bRect.width / bRect.height;
                         let area = cv.contourArea(bCnt);
                         
-                        // Filter: Is it a circle? (Aspect ratio ~1.0) and is it bubble-sized?
-                        if (aspectRatio >= 0.8 && aspectRatio <= 1.2 && area > 80 && area < 2000) {
+                        // NEW MATH: Calculate Solidity to filter out text/letters
+                        // Solidity = Area of contour / Area of its convex hull (bounding boundary)
+                        let hull = new cv.Mat();
+                        cv.convexHull(bCnt, hull, false, true);
+                        let hullArea = cv.contourArea(hull);
+                        let solidity = area / hullArea;
+                        hull.delete(); // Free memory
+                        
+                        // STRICT FILTER: Must be round, right size, AND Solid (solidity > 0.85 ignores squiggly text)
+                        if (aspectRatio >= 0.8 && aspectRatio <= 1.2 && area > 80 && area < 2000 && solidity > 0.85) {
                             bubblesFound++;
                             
                             // Check the density of white pixels inside this bubble's box
