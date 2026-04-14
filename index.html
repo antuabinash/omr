@@ -22,10 +22,10 @@
             display: flex; justify-content: space-between; align-items: flex-start;
         }
         
-        /* Left Block (Roll No - Shorter) */
-        .guide-left { width: 28%; height: 75%; border: 2px dashed rgba(255,255,255,0.4); position: relative; }
+        /* Left Block (Roll No - Now matched to 100% height) */
+        .guide-left { width: 28%; height: 100%; border: 2px dashed rgba(255,255,255,0.4); position: relative; }
         
-        /* Right Block (Answers - Taller) */
+        /* Right Block (Answers) */
         .guide-right { width: 68%; height: 100%; border: 2px dashed rgba(255,255,255,0.4); position: relative; }
         
         /* The 8 Target Squares */
@@ -232,10 +232,10 @@
                         setTargetUI("#28a745", "rgba(40, 167, 69, 0.3)", "rgba(40, 167, 69, 0.8)");
 
                         // ==========================================
-                        // WARP 1: LEFT BLOCK (Roll No) - 300 x 600 px
+                        // WARP 1: LEFT BLOCK (Roll No) - 300 x 800 px
                         // ==========================================
                         let leftWarp = new cv.Mat();
-                        let leftW = 300; let leftH = 600;
+                        let leftW = 300; let leftH = 800;
                         let srcLeftTri = cv.matFromArray(4, 1, cv.CV_32FC2, [leftCorners[0].x, leftCorners[0].y, leftCorners[1].x, leftCorners[1].y, leftCorners[3].x, leftCorners[3].y, leftCorners[2].x, leftCorners[2].y]);
                         let dstLeftTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, leftW, 0, leftW, leftH, 0, leftH]);
                         let ML = cv.getPerspectiveTransform(srcLeftTri, dstLeftTri);
