@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OMR Scanner - 4 Target Edition</title>
+    <title>OMR Scanner - Ultra Forgiving</title>
     <style>
         body { font-family: sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; text-align: center; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
@@ -15,10 +15,10 @@
         .video-container { position: relative; width: 100%; max-width: 450px; margin: 0 auto; border: 3px solid #333; border-radius: 8px; overflow: hidden; background: #000; }
         video { width: 100%; display: block; }
         
-        /* The invisible 1:1.5 container holding the 4 target squares */
+        /* 1:1.5 Aspect Ratio Guide Container */
         .guide-container { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 70%; aspect-ratio: 1 / 1.5; z-index: 10; pointer-events: none; }
         
-        /* The 4 Distinct Target Squares */
+        /* 4 Dynamic Target Squares */
         .target-square { position: absolute; width: 45px; height: 45px; border: 3px solid #007bff; background-color: rgba(0, 123, 255, 0.1); box-shadow: 0 0 10px rgba(0,0,0,0.5); border-radius: 4px; transition: all 0.2s; }
         .ts-tl { top: -15px; left: -15px; }
         .ts-tr { top: -15px; right: -15px; }
@@ -56,7 +56,6 @@
         
         <div class="video-container" id="vidContainer">
             <video id="cameraFeed" autoplay playsinline></video>
-            
             <div class="guide-container" id="guideContainer">
                 <div class="target-square ts-tl"></div>
                 <div class="target-square ts-tr"></div>
@@ -97,7 +96,6 @@
         let stableFrames = 0;
         let lastCenters = [];
 
-        // Helper to change target box colors
         function setTargetColor(borderColor, bgColor) {
             targetSquares.forEach(sq => {
                 sq.style.borderColor = borderColor;
@@ -120,11 +118,12 @@
             }).catch(error => { alert(`Camera Failed: ${error.message}`); });
         });
 
+        // Doubled the shake tolerance to make it easier to lock on
         function areCentersStable(newCenters, oldCenters) {
             if (oldCenters.length !== 4) return false;
             let diff = 0;
             for(let i=0; i<4; i++) diff += Math.abs(newCenters[i].x - oldCenters[i].x) + Math.abs(newCenters[i].y - oldCenters[i].y);
-            return diff < 40; 
+            return diff < 80; 
         }
 
         function attemptAutoCapture() {
@@ -140,8 +139,9 @@
                 let thresh = new cv.Mat();
                 
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-                cv.threshold(gray, thresh, 120, 255, cv.THRESH_BINARY_INV);
+                
+                // MASSIVE UPGRADE: OTSU Thresholding automatically cuts through screen glare and shadows!
+                cv.threshold(gray, thresh, 0, 255, cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
 
                 let contours = new cv.MatVector();
                 let hierarchy = new cv.Mat();
@@ -154,16 +154,14 @@
                     let bRect = cv.boundingRect(cnt);
                     let markerAspectRatio = bRect.width / bRect.height;
 
-                    if (area > 300 && area < 15000 && markerAspectRatio >= 0.7 && markerAspectRatio <= 1.3) { 
-                        let perimeter = cv.arcLength(cnt, true);
-                        let approx = new cv.Mat();
-                        cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
-                        if (approx.rows === 4) cornerRects.push(bRect);
-                        approx.delete();
+                    // MASSIVE UPGRADE 2: Removed strict polygon checking. Any blob roughly square and big enough counts!
+                    if (area > 150 && area < 25000 && markerAspectRatio >= 0.6 && markerAspectRatio <= 1.4) { 
+                        cornerRects.push(bRect);
                     }
                 }
 
                 if (cornerRects.length >= 4) {
+                    // Sorting automatically discards bubbles and grabs the 4 extreme anchors
                     cornerRects.sort((a, b) => (a.x + a.y) - (b.x + b.y));
                     let tlRect = cornerRects[0]; let brRect = cornerRects[cornerRects.length - 1];
                     cornerRects.sort((a, b) => (a.x - a.y) - (b.x - b.y));
@@ -177,8 +175,7 @@
                     let sortedCorners = [tl, tr, bl, br];
                     let estimatedWidth = Math.hypot(tr.x - tl.x, tr.y - tl.y);
                     
-                    // User must hold phone close enough to fill the target boxes
-                    if (estimatedWidth > canvasElement.width * 0.4) {
+                    if (estimatedWidth > canvasElement.width * 0.3) {
                         
                         if (areCentersStable(sortedCorners, lastCenters)) {
                             stableFrames++;
@@ -199,10 +196,9 @@
                             scanStatus.innerText = "Processing Grid...";
                             setTargetColor("#28a745", "rgba(40, 167, 69, 0.3)"); // Green UI Lock
 
-                            // PERFECT 1:1.5 WARP MATH
                             let maxWidth = Math.max(Math.hypot(br.x - bl.x, br.y - bl.y), Math.hypot(tr.x - tl.x, tr.y - tl.y));
                             let outputWidth = maxWidth;
-                            let outputHeight = outputWidth * 1.5;
+                            let outputHeight = outputWidth * 1.5; // Force 1:1.5 Aspect Ratio
 
                             let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
                             let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, outputWidth, 0, outputWidth, outputHeight, 0, outputHeight]);
@@ -215,7 +211,7 @@
                             let warpedThresh = new cv.Mat();
                             cv.threshold(warpedGray, warpedThresh, 150, 255, cv.THRESH_BINARY_INV);
                             
-                            // FIND ROW SYNC MARKS
+                            // FIND 24 ROW SYNC MARKS
                             let rowContours = new cv.MatVector();
                             cv.findContours(warpedThresh, rowContours, new cv.Mat(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
@@ -239,7 +235,7 @@
                                 }
                             }
 
-                            // REQUIRE EXACTLY 24 MARKS
+                            // GRADE THE SHEET IF 24 MARKS ARE FOUND
                             if (uniqueMarks.length === 24) {
                                 
                                 const ANSWER_KEY = [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0];
@@ -317,10 +313,9 @@
                                 canvasElement.style.display = "block"; cv.imshow('canvasOutput', warped);
                                 vidContainer.style.display = "none";
                                 
+                                scanStatus.style.backgroundColor = "#28a745"; scanStatus.innerText = "Scan Complete!";
                                 resultCard.style.display = "block";
-                                classOut.innerText = `Class: ${classStr}`;
-                                rollOut.innerText = `Roll No: ${rollStr}`;
-                                scoreOut.innerText = `Score: ${correctAnswers} / 25`; 
+                                classOut.innerText = `Class: ${classStr}`; rollOut.innerText = `Roll No: ${rollStr}`; scoreOut.innerText = `Score: ${correctAnswers} / 25`; 
                                 resetBtn.style.display = "block"; 
 
                             } else {
