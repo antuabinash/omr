@@ -3,146 +3,120 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OMR Scanner - Portal</title>
+    <title>OMR Scanner - Auto Capture</title>
     <style>
         body { font-family: sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; text-align: center; }
-        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 400px; margin: 0 auto; }
-        .warning-box { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 15px; border-radius: 5px; text-align: left; font-size: 14px; margin-bottom: 20px;}
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
         
-        /* Button Styles */
-        button { padding: 15px 30px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; transition: background 0.3s;}
+        button { padding: 15px 30px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; }
         button:disabled { background-color: #6c757d; cursor: not-allowed; }
         
         #scannerSection { display: none; margin-top: 20px; }
-        video { width: 100%; border: 3px solid #333; border-radius: 8px; background: #000; }
         
-        /* Canvas is hidden until we take a picture */
-        canvas { display: none; width: 100%; max-width: 400px; border: 3px solid #28a745; border-radius: 8px; margin-top: 15px; }
+        /* Camera & Overlay Container */
+        .video-container { position: relative; width: 100%; max-width: 450px; margin: 0 auto; border: 3px solid #333; border-radius: 8px; overflow: hidden; background: #000; }
+        video { width: 100%; display: block; }
+        
+        /* The Visual Guide Overlay */
+        .guide-overlay { position: absolute; top: 15%; left: 10%; right: 10%; bottom: 15%; border: 2px dashed rgba(255, 255, 255, 0.6); box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5); z-index: 10; pointer-events: none; }
+        .corner { position: absolute; width: 30px; height: 30px; border: 5px solid #28a745; }
+        .tl { top: -3px; left: -3px; border-right: none; border-bottom: none; }
+        .tr { top: -3px; right: -3px; border-left: none; border-bottom: none; }
+        .bl { bottom: -3px; left: -3px; border-right: none; border-top: none; }
+        .br { bottom: -3px; right: -3px; border-left: none; border-top: none; }
+
+        .status-text { background: #007bff; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; }
+
+        canvas { display: none; width: 100%; border: 3px solid #28a745; border-radius: 8px; margin-top: 15px; }
+        #scoreDisplay { display: none; background: #28a745; color: white; font-size: 24px; padding: 15px; border-radius: 8px; margin-top: 15px; font-weight: bold; }
     </style>
-    
-    <!-- LOAD OPENCV.JS -->
     <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
 </head>
 <body>
 
-    <!-- GATEKEEPER SCREEN -->
     <div id="disclaimerSection" class="card">
         <h2>System Requirements</h2>
-        
-        <div class="warning-box">
-            <strong>⚠️ For Smooth Scanning:</strong>
-            <ul>
-                <li>Use <b>Google Chrome</b> (Android) or <b>Safari</b> (iOS).</li>
-                <li>Device must have at least <b>4GB RAM</b>.</li>
-                <li>Ensure good lighting without shadows on the paper.</li>
-            </ul>
-        </div>
-
-        <p id="browserWarning" style="color: red; font-weight: bold; display: none;">
-            Please open this link in Google Chrome!
-        </p>
-
-        <!-- Button starts DISABLED -->
         <button id="agreeBtn" disabled>Loading AI Engine...</button>
     </div>
 
-    <!-- SCANNER SCREEN (Hidden initially) -->
     <div id="scannerSection" class="card">
-        <h2>Align Sheet & Scan</h2>
+        <div id="scanStatus" class="status-text">Align the 4 black squares inside the green corners...</div>
         
-        <!-- Live Camera Feed -->
-        <video id="cameraFeed" autoplay playsinline></video>
+        <div class="video-container" id="vidContainer">
+            <video id="cameraFeed" autoplay playsinline></video>
+            <!-- Auto-Capture Visual Guide -->
+            <div class="guide-overlay">
+                <div class="corner tl"></div>
+                <div class="corner tr"></div>
+                <div class="corner bl"></div>
+                <div class="corner br"></div>
+            </div>
+        </div>
         
-        <button id="snapBtn" style="background-color: #007bff; margin-top: 15px;">Grade Sheet</button>
-        
-        <!-- The Processed Image will appear here -->
         <canvas id="canvasOutput"></canvas>
+        <div id="scoreDisplay">Score: -- / 25</div>
     </div>
 
     <script>
-        // --- HTML ELEMENTS ---
         const agreeBtn = document.getElementById('agreeBtn');
-        const snapBtn = document.getElementById('snapBtn');
         const disclaimerSection = document.getElementById('disclaimerSection');
         const scannerSection = document.getElementById('scannerSection');
         const videoElement = document.getElementById('cameraFeed');
-        const browserWarning = document.getElementById('browserWarning');
         const canvasElement = document.getElementById('canvasOutput');
         const canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
+        const scanStatus = document.getElementById('scanStatus');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const vidContainer = document.getElementById('vidContainer');
+        
+        let autoScanInterval;
 
-        // --- OPENCV INITIALIZATION ---
         function onOpenCvReady() {
-            console.log("OpenCV is ready!");
             agreeBtn.disabled = false;
-            agreeBtn.innerText = "I Understand, Open Camera";
-            agreeBtn.style.backgroundColor = "#28a745"; 
+            agreeBtn.innerText = "Start Auto-Scanner";
         }
 
-        // --- BROWSER CHECK ---
-        const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor);
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-
-        if (!isChrome && !isIOS) {
-            browserWarning.style.display = "block";
-        }
-
-        // --- CAMERA LOGIC ---
         agreeBtn.addEventListener('click', () => {
             disclaimerSection.style.display = 'none';
             scannerSection.style.display = 'block';
 
             navigator.mediaDevices.getUserMedia({ 
-                // Force back camera and limit resolution to prevent browser crashes
                 video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } 
             })
             .then(stream => {
                 videoElement.srcObject = stream;
+                // Start the auto-capture loop (checks every 800ms)
+                autoScanInterval = setInterval(attemptAutoCapture, 800);
             })
-            .catch(error => {
-                console.error("Camera error:", error);
-                alert("Camera access is required to scan the OMR sheet.");
-            });
+            .catch(error => { alert("Camera access required."); });
         });
 
-        // --- CAPTURE AND PROCESS IMAGE ---
-        snapBtn.addEventListener('click', () => {
-            // 1. Match canvas size to video size
+        function attemptAutoCapture() {
+            // Ignore if video isn't fully loaded
+            if (videoElement.videoWidth === 0) return; 
+
             canvasElement.width = videoElement.videoWidth;
             canvasElement.height = videoElement.videoHeight;
-            
-            // 2. Draw current video frame onto canvas
             canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
 
-            // 3. Process with OpenCV
             try {
                 let src = cv.imread('canvasOutput'); 
                 let gray = new cv.Mat();
                 let thresh = new cv.Mat();
                 
-                // Convert to grayscale and blur
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                let ksize = new cv.Size(5, 5);
-                cv.GaussianBlur(gray, gray, ksize, 0, 0, cv.BORDER_DEFAULT);
-
-                // Thresholding: Force pure black and white.
+                cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
                 cv.threshold(gray, thresh, 120, 255, cv.THRESH_BINARY_INV);
 
-                // Find Contours
                 let contours = new cv.MatVector();
                 let hierarchy = new cv.Mat();
                 cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-                let squaresFound = 0;
-                let centers = []; // Array to store the center point of every square we find
+                let centers = []; 
 
-                // Loop through the outlines to find our anchor squares
                 for (let i = 0; i < contours.size(); ++i) {
                     let cnt = contours.get(i);
                     let area = cv.contourArea(cnt);
-
-                    // Add Aspect Ratio check to make sure the marker is actually a SQUARE
-                    let bRect = cv.boundingRect(cnt);
-                    let markerAspectRatio = bRect.width / bRect.height;
+                    let markerAspectRatio = cv.boundingRect(cnt).width / cv.boundingRect(cnt).height;
 
                     if (area > 300 && area < 10000 && markerAspectRatio >= 0.7 && markerAspectRatio <= 1.3) { 
                         let perimeter = cv.arcLength(cnt, true);
@@ -150,138 +124,96 @@
                         cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
 
                         if (approx.rows === 4) {
-                            squaresFound++;
                             let rect = cv.boundingRect(cnt);
-                            
-                            // Calculate the exact center of this square
-                            let cx = rect.x + (rect.width / 2);
-                            let cy = rect.y + (rect.height / 2);
-                            centers.push({ x: cx, y: cy });
+                            centers.push({ x: rect.x + (rect.width / 2), y: rect.y + (rect.height / 2) });
                         }
                         approx.delete();
                     }
                 }
 
-                // If we found at least 4 squares, we can flatten the image!
-                if (centers.length >= 4) {
-                    // Sort the points to find the 4 outermost corners using math
-                    // Top-Left has the smallest (x + y)
-                    // Bottom-Right has the largest (x + y)
-                    // Top-Right has the largest (x - y)
-                    // Bottom-Left has the smallest (x - y)
+                // SUCCESS: If exactly 4 squares are found, auto-capture triggers!
+                if (centers.length === 4) {
+                    clearInterval(autoScanInterval); // Stop scanning!
+                    scanStatus.style.backgroundColor = "#28a745";
+                    scanStatus.innerText = "Processing Image...";
                     
                     centers.sort((a, b) => (a.x + a.y) - (b.x + b.y));
-                    let tl = centers[0]; 
-                    let br = centers[centers.length - 1];
-
+                    let tl = centers[0]; let br = centers[3];
                     centers.sort((a, b) => (a.x - a.y) - (b.x - b.y));
-                    let bl = centers[0];
-                    let tr = centers[centers.length - 1];
+                    let bl = centers[0]; let tr = centers[3];
 
-                    // Calculate the size of our new flattened image
-                    let widthA = Math.hypot(br.x - bl.x, br.y - bl.y);
-                    let widthB = Math.hypot(tr.x - tl.x, tr.y - tl.y);
-                    let maxWidth = Math.max(widthA, widthB);
+                    let maxWidth = Math.max(Math.hypot(br.x - bl.x, br.y - bl.y), Math.hypot(tr.x - tl.x, tr.y - tl.y));
+                    let maxHeight = Math.max(Math.hypot(tr.x - br.x, tr.y - br.y), Math.hypot(tl.x - bl.x, tl.y - bl.y));
 
-                    let heightA = Math.hypot(tr.x - br.x, tr.y - br.y);
-                    let heightB = Math.hypot(tl.x - bl.x, tl.y - bl.y);
-                    let maxHeight = Math.max(heightA, heightB);
-
-                    // Create the math matrices for the transformation
                     let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
                     let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, maxWidth, 0, maxWidth, maxHeight, 0, maxHeight]);
-                    let dsize = new cv.Size(maxWidth, maxHeight);
-
-                    // WARP PERSPECTIVE (Stretch and Flatten)
+                    
                     let M = cv.getPerspectiveTransform(srcTri, dstTri);
                     let warped = new cv.Mat();
-                    cv.warpPerspective(src, warped, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+                    cv.warpPerspective(src, warped, M, new cv.Size(maxWidth, maxHeight), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
 
-                    // --- MILESTONE 6: DETECT AND GRADE BUBBLES ---
+                    // --- DETECT BUBBLES ---
                     let warpedGray = new cv.Mat();
                     cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
-                    
                     let warpedThresh = new cv.Mat();
-                    // Convert to pure black & white. Dark pencil marks become white pixels for easier counting.
                     cv.threshold(warpedGray, warpedThresh, 150, 255, cv.THRESH_BINARY_INV);
                     
                     let bubbleContours = new cv.MatVector();
-                    let bubbleHierarchy = new cv.Mat();
-                    cv.findContours(warpedThresh, bubbleContours, bubbleHierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+                    cv.findContours(warpedThresh, bubbleContours, new cv.Mat(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
-                    let bubblesFound = 0;
-                    
+                    let filledBubbles = 0;
+                    let imageArea = maxWidth * maxHeight;
+
                     for (let j = 0; j < bubbleContours.size(); ++j) {
                         let bCnt = bubbleContours.get(j);
                         let bRect = cv.boundingRect(bCnt);
                         let aspectRatio = bRect.width / bRect.height;
                         let area = cv.contourArea(bCnt);
                         
-                        // NEW MATH: Calculate Solidity to filter out text/letters
-                        // Solidity = Area of contour / Area of its convex hull (bounding boundary)
                         let hull = new cv.Mat();
                         cv.convexHull(bCnt, hull, false, true);
-                        let hullArea = cv.contourArea(hull);
-                        let solidity = area / hullArea;
-                        hull.delete(); // Free memory
-                        
-                        // STRICT FILTER: Must be round, right size, AND Solid (solidity > 0.85 ignores squiggly text)
-                        if (aspectRatio >= 0.8 && aspectRatio <= 1.2 && area > 80 && area < 2000 && solidity > 0.85) {
-                            bubblesFound++;
-                            
-                            // Check the density of white pixels inside this bubble's box
-                            let roi = warpedThresh.roi(bRect);
-                            let totalPixels = bRect.width * bRect.height;
-                            let fillRatio = cv.countNonZero(roi) / totalPixels;
-                            
-                            let center = new cv.Point(bRect.x + bRect.width / 2, bRect.y + bRect.height / 2);
-                            let radius = bRect.width / 2;
+                        let solidity = area / cv.contourArea(hull);
+                        hull.delete(); 
 
-                            // A perfectly shaded circle has a ratio of ~0.78. >0.45 means it's colored in!
-                            if (fillRatio > 0.45) {
-                                // FILLED BUBBLE -> Draw thick GREEN circle
-                                cv.circle(warped, center, radius, [0, 255, 0, 255], 4); 
-                            } else {
-                                // EMPTY BUBBLE -> Draw thin RED circle
-                                cv.circle(warped, center, radius, [255, 0, 0, 255], 2);
-                            }
+                        if (aspectRatio >= 0.75 && aspectRatio <= 1.25 && area > imageArea * 0.0005 && area < imageArea * 0.005 && solidity > 0.8) {
                             
-                            roi.delete(); // Free memory for this check
+                            let roi = warpedThresh.roi(bRect);
+                            let fillRatio = cv.countNonZero(roi) / (bRect.width * bRect.height);
+                            let center = new cv.Point(bRect.x + bRect.width / 2, bRect.y + bRect.height / 2);
+
+                            // Calculate marks: Count filled bubbles
+                            if (fillRatio > 0.45) {
+                                filledBubbles++;
+                                cv.circle(warped, center, bRect.width / 2, [0, 255, 0, 255], 4); 
+                            } else {
+                                cv.circle(warped, center, bRect.width / 2, [255, 0, 0, 255], 2);
+                            }
+                            roi.delete();
                         }
                     }
                     
-                    console.log(`Found ${bubblesFound} total bubbles on the sheet!`);
-                    
-                    // Clean up bubble detection memory
-                    warpedGray.delete(); warpedThresh.delete(); 
-                    bubbleContours.delete(); bubbleHierarchy.delete();
-                    // ---------------------------------------------
-
-                    // Resize the canvas to match our new flattened image
+                    // Display final UI
                     canvasElement.width = maxWidth;
                     canvasElement.height = maxHeight;
-                    
-                    // Show the perfect, flattened image!
                     canvasElement.style.display = "block"; 
                     cv.imshow('canvasOutput', warped);
+                    
+                    vidContainer.style.display = "none"; // Hide camera
+                    scanStatus.innerText = "Scan Complete!";
+                    scoreDisplay.style.display = "block";
+                    // Displaying total filled. In the future, we will map this to an answer key!
+                    scoreDisplay.innerText = `Mark: ${filledBubbles} / 25`; 
 
-                    // Clean up memory for the warp variables
                     srcTri.delete(); dstTri.delete(); M.delete(); warped.delete();
-                    console.log("Successfully deskewed and flattened the sheet!");
-
-                } else {
-                    alert(`Only found ${squaresFound} markers. Please make sure all 4 corners of the OMR sheet are clearly in the frame!`);
+                    warpedGray.delete(); warpedThresh.delete(); bubbleContours.delete();
                 }
 
-                // CLEAN UP ALL MEMORY
-                src.delete(); gray.delete(); thresh.delete(); 
-                contours.delete(); hierarchy.delete();
+                src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
 
             } catch (err) {
-                console.error("OpenCV Error:", err);
-                alert("Failed to process image. Make sure the AI Engine has loaded.");
+                // Ignore errors during auto-scan loops (it usually means it just hasn't seen the page yet)
             }
-        });
+        }
     </script>
 </body>
 </html>
