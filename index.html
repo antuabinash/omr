@@ -17,13 +17,12 @@
         .video-container { position: relative; width: 100%; max-width: 450px; margin: 0 auto; border: 3px solid #333; border-radius: 8px; overflow: hidden; background: #000; }
         video { width: 100%; display: block; }
         
-        /* The Visual Guide Overlay */
-        .guide-overlay { position: absolute; top: 15%; left: 10%; right: 10%; bottom: 15%; border: 2px dashed rgba(255, 255, 255, 0.6); box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5); z-index: 10; pointer-events: none; }
-        .corner { position: absolute; width: 30px; height: 30px; border: 5px solid #28a745; }
-        .tl { top: -3px; left: -3px; border-right: none; border-bottom: none; }
-        .tr { top: -3px; right: -3px; border-left: none; border-bottom: none; }
-        .bl { bottom: -3px; left: -3px; border-right: none; border-top: none; }
-        .br { bottom: -3px; right: -3px; border-left: none; border-top: none; }
+        /* Four distinct target squares inspired by EvalBee */
+        .target-square { position: absolute; width: 60px; height: 60px; border: 3px solid #4285f4; background-color: rgba(66, 133, 244, 0.15); z-index: 10; pointer-events: none; border-radius: 4px; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+        .tl { top: 15%; left: 8%; }
+        .tr { top: 15%; right: 8%; }
+        .bl { bottom: 15%; left: 8%; }
+        .br { bottom: 15%; right: 8%; }
 
         .status-text { background: #007bff; color: white; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; }
 
@@ -40,17 +39,15 @@
     </div>
 
     <div id="scannerSection" class="card">
-        <div id="scanStatus" class="status-text">Align the 4 black squares inside the green corners...</div>
+        <div id="scanStatus" class="status-text">Place the 4 black squares inside the blue boxes...</div>
         
         <div class="video-container" id="vidContainer">
             <video id="cameraFeed" autoplay playsinline></video>
             <!-- Auto-Capture Visual Guide -->
-            <div class="guide-overlay">
-                <div class="corner tl"></div>
-                <div class="corner tr"></div>
-                <div class="corner bl"></div>
-                <div class="corner br"></div>
-            </div>
+            <div class="target-square tl"></div>
+            <div class="target-square tr"></div>
+            <div class="target-square bl"></div>
+            <div class="target-square br"></div>
         </div>
         
         <canvas id="canvasOutput"></canvas>
