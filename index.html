@@ -167,6 +167,18 @@
                     for (let j = 0; j < bubbleContours.size(); ++j) {
                         let bCnt = bubbleContours.get(j);
                         let bRect = cv.boundingRect(bCnt);
+                        
+                        // NEW FIX: Ignore the 4 anchor squares on the edges!
+                        let centerX = bRect.x + bRect.width / 2;
+                        let centerY = bRect.y + bRect.height / 2;
+                        let marginX = maxWidth * 0.08; // 8% horizontal margin
+                        let marginY = maxHeight * 0.08; // 8% vertical margin
+                        
+                        // If the shape is in the extreme outer edges, it's an anchor. Skip it!
+                        if (centerX < marginX || centerX > maxWidth - marginX || centerY < marginY || centerY > maxHeight - marginY) {
+                            continue; 
+                        }
+
                         let aspectRatio = bRect.width / bRect.height;
                         let area = cv.contourArea(bCnt);
                         
@@ -179,7 +191,7 @@
                             
                             let roi = warpedThresh.roi(bRect);
                             let fillRatio = cv.countNonZero(roi) / (bRect.width * bRect.height);
-                            let center = new cv.Point(bRect.x + bRect.width / 2, bRect.y + bRect.height / 2);
+                            let center = new cv.Point(centerX, centerY);
 
                             // Calculate marks: Count filled bubbles
                             if (fillRatio > 0.45) {
