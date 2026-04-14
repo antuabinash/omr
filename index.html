@@ -20,10 +20,12 @@
         canvas { display: none; width: 100%; max-width: 400px; border: 3px solid #28a745; border-radius: 8px; margin-top: 15px; }
     </style>
     
+    <!-- LOAD OPENCV.JS -->
     <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
 </head>
 <body>
 
+    <!-- GATEKEEPER SCREEN -->
     <div id="disclaimerSection" class="card">
         <h2>System Requirements</h2>
         
@@ -40,16 +42,20 @@
             Please open this link in Google Chrome!
         </p>
 
+        <!-- Button starts DISABLED -->
         <button id="agreeBtn" disabled>Loading AI Engine...</button>
     </div>
 
+    <!-- SCANNER SCREEN (Hidden initially) -->
     <div id="scannerSection" class="card">
         <h2>Align Sheet & Scan</h2>
         
+        <!-- Live Camera Feed -->
         <video id="cameraFeed" autoplay playsinline></video>
         
         <button id="snapBtn" style="background-color: #007bff; margin-top: 15px;">Grade Sheet</button>
         
+        <!-- The Processed Image will appear here -->
         <canvas id="canvasOutput"></canvas>
     </div>
 
@@ -109,25 +115,67 @@
 
             // 3. Process with OpenCV
             try {
-                let src = cv.imread('canvasOutput'); // Read from canvas
-                let dst = new cv.Mat(); // Create empty matrix for result
-
-                // Convert to Grayscale
-                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-
-                // Apply a slight blur to remove paper texture noise
-                let ksize = new cv.Size(5, 5);
-                cv.GaussianBlur(dst, dst, ksize, 0, 0, cv.BORDER_DEFAULT);
-
-                // Make canvas visible and draw the processed image back onto it
-                canvasElement.style.display = "block"; 
-                cv.imshow('canvasOutput', dst);
-
-                // FREE MEMORY (Crucial to prevent crashes!)
-                src.delete();
-                dst.delete();
+                let src = cv.imread('canvasOutput'); 
+                let gray = new cv.Mat();
+                let thresh = new cv.Mat();
                 
-                console.log("Image successfully processed!");
+                // Convert to grayscale and blur
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+                let ksize = new cv.Size(5, 5);
+                cv.GaussianBlur(gray, gray, ksize, 0, 0, cv.BORDER_DEFAULT);
+
+                // Thresholding: Force pure black and white.
+                // We use BINARY_INV so dark areas become white shapes on a black background
+                cv.threshold(gray, thresh, 120, 255, cv.THRESH_BINARY_INV);
+
+                // Find Contours (Outlines of shapes)
+                let contours = new cv.MatVector();
+                let hierarchy = new cv.Mat();
+                cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+                // Create a copy of the original image to draw green boxes on
+                let displayMat = src.clone();
+                let squaresFound = 0;
+
+                // Loop through the outlines to find our anchor squares
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+
+                    // Filter A: Size (Ignore tiny specs and massive borders)
+                    if (area > 300 && area < 10000) { 
+                        
+                        // Filter B: Does it have exactly 4 corners?
+                        let perimeter = cv.arcLength(cnt, true);
+                        let approx = new cv.Mat();
+                        // Approximate the shape with straight lines
+                        cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
+
+                        // If it has 4 sides, it's a square/rectangle!
+                        if (approx.rows === 4) {
+                            squaresFound++;
+                            
+                            // Get the coordinates to draw a box
+                            let rect = cv.boundingRect(cnt);
+                            let point1 = new cv.Point(rect.x, rect.y);
+                            let point2 = new cv.Point(rect.x + rect.width, rect.y + rect.height);
+                            
+                            // Draw a thick green rectangle around the anchor square
+                            cv.rectangle(displayMat, point1, point2, [0, 255, 0, 255], 4);
+                        }
+                        approx.delete(); // Free memory
+                    }
+                }
+
+                // Show the image with drawn boxes on our canvas
+                canvasElement.style.display = "block"; 
+                cv.imshow('canvasOutput', displayMat);
+
+                console.log(`OpenCV found ${squaresFound} squares!`);
+
+                // CLEAN UP ALL MEMORY (Crucial in JS to prevent app from crashing)
+                src.delete(); gray.delete(); thresh.delete(); 
+                contours.delete(); hierarchy.delete(); displayMat.delete();
 
             } catch (err) {
                 console.error("OpenCV Error:", err);
@@ -135,6 +183,5 @@
             }
         });
     </script>
-
 </body>
 </html>
