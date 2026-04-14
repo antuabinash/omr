@@ -1,19 +1,68 @@
-<script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMR Scanner - Portal</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; text-align: center; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 400px; margin: 0 auto; }
+        .warning-box { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 15px; border-radius: 5px; text-align: left; font-size: 14px; margin-bottom: 20px;}
+        
+        /* Updated Button Styles */
+        button { padding: 15px 30px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; transition: background 0.3s;}
+        button:disabled { background-color: #6c757d; cursor: not-allowed; }
+        
+        #scannerSection { display: none; margin-top: 20px; }
+        video { width: 100%; border: 3px solid #333; border-radius: 8px; background: #000; }
+        canvas { display: none; /* We hide the canvas, it's just for processing */ }
+    </style>
+    
+    <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+</head>
+<body>
+
+    <div id="disclaimerSection" class="card">
+        <h2>System Requirements</h2>
+        
+        <div class="warning-box">
+            <strong>⚠️ For Smooth Scanning:</strong>
+            <ul>
+                <li>Use <b>Google Chrome</b> (Android) or <b>Safari</b> (iOS).</li>
+                <li>Device must have at least <b>4GB RAM</b>.</li>
+                <li>Ensure good lighting without shadows on the paper.</li>
+            </ul>
+        </div>
+
+        <p id="browserWarning" style="color: red; font-weight: bold; display: none;">
+            Please open this link in Google Chrome!
+        </p>
+
+        <button id="agreeBtn" disabled>Loading AI Engine...</button>
+    </div>
+
+    <div id="scannerSection" class="card">
+        <h2>Align Sheet & Scan</h2>
+        <video id="cameraFeed" autoplay playsinline></video>
+        <button id="snapBtn" style="background-color: #007bff; margin-top: 10px;">Grade Sheet</button>
+        
+        <canvas id="canvasOutput"></canvas>
+    </div>
+
+    <script>
         const agreeBtn = document.getElementById('agreeBtn');
-        const snapBtn = document.getElementById('snapBtn');
         const disclaimerSection = document.getElementById('disclaimerSection');
         const scannerSection = document.getElementById('scannerSection');
         const videoElement = document.getElementById('cameraFeed');
         const browserWarning = document.getElementById('browserWarning');
-        const canvasElement = document.getElementById('canvasOutput');
-        const canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
 
         // --- OPENCV INITIALIZATION ---
+        // This function is called automatically when opencv.js finishes loading
         function onOpenCvReady() {
             console.log("OpenCV is ready!");
             agreeBtn.disabled = false;
             agreeBtn.innerText = "I Understand, Open Camera";
-            agreeBtn.style.backgroundColor = "#28a745"; 
+            agreeBtn.style.backgroundColor = "#28a745"; // Make it green
         }
 
         // --- BROWSER CHECK ---
@@ -40,44 +89,7 @@
                 alert("Camera access is required.");
             });
         });
-
-        // --- CAPTURE AND PROCESS IMAGE ---
-        snapBtn.addEventListener('click', () => {
-            // 1. Set the canvas size to match the video
-            canvasElement.width = videoElement.videoWidth;
-            canvasElement.height = videoElement.videoHeight;
-            
-            // 2. Draw the current frame of the video onto the canvas
-            canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
-
-            // 3. Let's start the OpenCV magic!
-            try {
-                // Read the image from the canvas into an OpenCV "Mat" (Matrix)
-                let src = cv.imread('canvasOutput');
-                let dst = new cv.Mat(); // Create a new Matrix to hold our processed image
-
-                // STEP A: Convert the image to Grayscale (Black and White)
-                // This makes it much easier to find the black squares
-                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-
-                // STEP B: Apply a slight blur
-                // This smooths out noise in the photo (like paper texture or bad lighting)
-                let ksize = new cv.Size(5, 5);
-                cv.GaussianBlur(dst, dst, ksize, 0, 0, cv.BORDER_DEFAULT);
-
-                // For testing: Draw the processed image BACK onto the canvas so we can see it
-                canvasElement.style.display = "block"; // Make the canvas visible
-                cv.imshow('canvasOutput', dst);
-
-                // Clean up memory (very important in JavaScript OpenCV!)
-                src.delete();
-                dst.delete();
-                
-                console.log("Image captured and converted to grayscale!");
-
-            } catch (err) {
-                console.error("Error processing image with OpenCV:", err);
-                alert("Failed to process image. Make sure the AI Engine has loaded.");
-            }
-        });
     </script>
+
+</body>
+</html>
