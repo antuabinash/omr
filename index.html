@@ -146,7 +146,7 @@
             if (oldCenters.length !== 8) return false;
             let diff = 0;
             for(let i=0; i<8; i++) diff += Math.abs(newCenters[i].x - oldCenters[i].x) + Math.abs(newCenters[i].y - oldCenters[i].y);
-            return diff < 120; 
+            return diff < 200; // Increased tolerance to 200px total to allow for natural hand shake
         }
 
         function sortCorners(corners) {
@@ -182,19 +182,31 @@
                     let area = cv.contourArea(cnt);
                     let bRect = cv.boundingRect(cnt);
                     let markerAspectRatio = bRect.width / bRect.height;
+                    
+                    // NEW: Solidity check. A square fills ~100% of its bounding rect. A circle fills ~78%.
+                    let solidity = area / (bRect.width * bRect.height);
 
-                    if (area > 150 && area < 15000 && markerAspectRatio >= 0.6 && markerAspectRatio <= 1.4) { 
-                        cornerCenters.push({ x: bRect.x + (bRect.width / 2), y: bRect.y + (bRect.height / 2) });
+                    // Filter: Area size, Aspect Ratio (~1.0), and Solidity (>0.85 rejects bubbles!)
+                    if (area > 150 && area < 15000 && markerAspectRatio >= 0.7 && markerAspectRatio <= 1.3 && solidity > 0.85) { 
+                        cornerCenters.push({ 
+                            x: bRect.x + (bRect.width / 2), 
+                            y: bRect.y + (bRect.height / 2),
+                            area: area 
+                        });
                     }
                 }
 
                 // REQUIRE AT LEAST 8 BLACK SQUARES
                 if (cornerCenters.length >= 8) {
                     
+                    // Sort by area to grab the 8 largest valid squares, ignoring background noise
+                    cornerCenters.sort((a, b) => b.area - a.area);
+                    let best8 = cornerCenters.slice(0, 8);
+
                     // Split the squares: Left 4 (Roll No Block), Right 4 (Answers Block)
-                    cornerCenters.sort((a, b) => a.x - b.x);
-                    let leftRaw = cornerCenters.slice(0, 4);
-                    let rightRaw = cornerCenters.slice(cornerCenters.length - 4);
+                    best8.sort((a, b) => a.x - b.x);
+                    let leftRaw = best8.slice(0, 4);
+                    let rightRaw = best8.slice(4, 8);
 
                     let leftCorners = sortCorners(leftRaw);
                     let rightCorners = sortCorners(rightRaw);
