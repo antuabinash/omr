@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMR Sheet - 4 Anchor Pro</title>
+    <style>
+        body { background-color: #555; display: flex; justify-content: center; padding: 20px; font-family: Arial, sans-serif; margin: 0; }
+        
+        /* A4 Paper Specification */
+        .sheet { width: 210mm; min-height: 297mm; background-color: white; padding: 30px 40px; box-sizing: border-box; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+
+        /* Header Area */
+        .header-area { border-bottom: 3px solid black; padding-bottom: 10px; margin-bottom: 30px; text-align: center; }
+        .header-area h1 { margin: 0 0 5px 0; font-size: 28px; text-transform: uppercase; letter-spacing: 1px; }
+        .info-row { display: flex; justify-content: space-between; font-size: 15px; font-weight: bold; margin-top: 15px; text-align: left; }
+        .input-line { display: inline-block; border-bottom: 1px solid black; min-width: 250px; }
+
+        /* Unified Scan Area (1 large box) */
+        .scan-area { position: relative; width: 100%; height: 750px; margin-top: 20px; }
+
+        /* 4 Corner Anchors (Only 4 now!) */
+        .anchor { width: 32px; height: 32px; background: black; position: absolute; transform: translate(-50%, -50%); border-radius: 2px; }
+        .tl { top: 0; left: 0; } .tr { top: 0; left: 100%; }
+        .bl { top: 100%; left: 0; } .br { top: 100%; left: 100%; }
+
+        /* Left Sync Marks */
+        .sync-mark { position: absolute; left: 4%; transform: translateY(-50%); width: 25px; height: 10px; background: black; }
+
+        /* Divider Line */
+        .divider { position: absolute; left: 38%; top: 5%; bottom: 5%; border-left: 2px dashed #ccc; }
+
+        /* Shared Elements */
+        .section-title { position: absolute; font-weight: bold; font-size: 16px; transform: translateX(-50%); top: 3%; }
+        .bubble { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 22px; height: 22px; border: 2px solid black; border-radius: 50%; color: #999; font-size: 12px; display: flex; justify-content: center; align-items: center; }
+        .label { position: absolute; font-weight: bold; font-size: 15px; transform: translateY(-50%); top: 50%; }
+
+        @media print { body { background-color: white; padding: 0; } .sheet { box-shadow: none; } }
+    </style>
+</head>
+<body>
+
+    <div class="sheet">
+        <div class="header-area">
+            <h1>EXCELLENCE ACADEMY</h1>
+            <p style="margin: 0; font-size: 13px; font-style: italic;">Darken the circles completely using a blue/black pen. Keep all 4 corner squares clear of stray marks.</p>
+            <div class="info-row">
+                <span>Student Name: <span class="input-line"></span></span>
+                <span>Date: <span class="input-line" style="min-width: 120px;"></span></span>
+            </div>
+        </div>
+
+        <div class="scan-area" id="scanArea">
+            <!-- The 4 Anchors -->
+            <div class="anchor tl"></div><div class="anchor tr"></div>
+            <div class="anchor bl"></div><div class="anchor br"></div>
+            
+            <div class="divider"></div>
+            <div class="section-title" style="left: 22%;">ROLL NO</div>
+            <div class="section-title" style="left: 70%;">ANSWERS (1 - 25)</div>
+        </div>
+    </div>
+
+    <script>
+        const scanArea = document.getElementById('scanArea');
+        let html = '';
+
+        // 13 Rows Total
+        for(let i=0; i<13; i++) {
+            // FIXED: Changed spacing from (12 + i*7) to (14 + i*6) 
+            // This safely pads the top and bottom so it never touches the corner anchors!
+            let yPct = 14 + (i * 6); 
+            
+            html += `<div class="sync-mark" style="top: ${yPct}%;"></div>`;
+            
+            // LEFT SIDE: Roll No (Rows 0-9)
+            if(i < 10) {
+                let digit = i;
+                let rollX = [15, 22, 29]; // Roll number columns
+                rollX.forEach(x => { html += `<div class="bubble" style="top: ${yPct}%; left: ${x}%;">${digit}</div>`; });
+            }
+
+            // RIGHT SIDE: Questions 1-25
+            let q1 = i + 1;
+            html += `<div class="label" style="top: ${yPct}%; left: 40%;">${q1}.</div>`;
+            let col1X = [45, 52, 59, 66];
+            col1X.forEach((x, idx) => { html += `<div class="bubble" style="top: ${yPct}%; left: ${x}%;">${['A','B','C','D'][idx]}</div>`; });
+
+            let q2 = i + 14; 
+            if(q2 <= 25) {
+                html += `<div class="label" style="top: ${yPct}%; left: 70%;">${q2}.</div>`;
+                let col2X = [75, 82, 89, 96];
+                col2X.forEach((x, idx) => { html += `<div class="bubble" style="top: ${yPct}%; left: ${x}%;">${['A','B','C','D'][idx]}</div>`; });
+            }
+        }
+        scanArea.innerHTML += html;
+    </script>
+</body>
+</html>
